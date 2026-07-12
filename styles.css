@@ -3364,3 +3364,280 @@ body.modal-open {
     animation: none;
   }
 }
+
+/* v1.3.0：各列表改為固定標題列的可滾動表格，提升手機單頁資訊密度 */
+.list-scroll-wrap {
+  max-height: clamp(340px, 58vh, 680px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-soft);
+  scrollbar-gutter: stable both-edges;
+  -webkit-overflow-scrolling: touch;
+}
+
+.list-scroll-wrap .data-table {
+  margin: 0;
+}
+
+.list-scroll-wrap .data-table thead th {
+  position: sticky;
+  z-index: 6;
+  top: 0;
+  background: var(--panel-strong);
+  box-shadow: 0 1px 0 var(--line);
+}
+
+.list-scroll-wrap .data-table td {
+  min-height: 48px;
+  padding-block: 9px;
+}
+
+.file-table-wrap #file-table {
+  min-width: 840px;
+}
+
+.note-table-wrap .note-table {
+  min-width: 760px;
+}
+
+.photo-table-wrap .photo-table {
+  min-width: 790px;
+}
+
+.compact-panel-head {
+  align-items: end;
+}
+
+.list-scroll-hint {
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.photo-list-panel {
+  margin-top: 14px;
+}
+
+.photo-table th:first-child,
+.photo-table td:first-child {
+  width: 58px;
+  text-align: center;
+}
+
+.photo-table th:nth-child(2),
+.photo-table td:nth-child(2) {
+  width: 76px;
+}
+
+.photo-table th:nth-child(6),
+.photo-table td:nth-child(6) {
+  width: 90px;
+  white-space: nowrap;
+}
+
+.photo-table th:last-child,
+.photo-table td:last-child {
+  width: 132px;
+}
+
+.photo-table-preview {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-strong);
+  cursor: pointer;
+}
+
+.photo-table-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.photo-name-stack {
+  min-width: 180px;
+  max-width: 320px;
+}
+
+.photo-name-stack strong,
+.photo-name-stack small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.row-action-text {
+  width: auto;
+  min-width: 50px;
+  padding-inline: 9px;
+  font-size: 10px;
+}
+
+#copy-photo[aria-busy="true"] {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+@media (max-width: 620px) {
+  .list-scroll-wrap {
+    max-height: min(57dvh, 560px);
+    min-height: 300px;
+    overflow: auto !important;
+    border-radius: 12px;
+  }
+
+  .list-scroll-hint {
+    text-align: left;
+  }
+
+  /* 取消舊版手機卡片模式，改回緊湊表格並固定欄位標題。 */
+  #file-table,
+  .note-table,
+  .photo-table {
+    display: table !important;
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  #file-table {
+    min-width: 760px !important;
+  }
+
+  .note-table {
+    min-width: 720px !important;
+  }
+
+  .photo-table {
+    min-width: 740px !important;
+  }
+
+  #file-table thead,
+  .note-table thead,
+  .photo-table thead {
+    position: static !important;
+    display: table-header-group !important;
+    width: auto !important;
+    height: auto !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    clip: auto !important;
+  }
+
+  #file-table thead tr,
+  .note-table thead tr,
+  .photo-table thead tr {
+    display: table-row !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+  }
+
+  #file-table thead th,
+  .note-table thead th,
+  .photo-table thead th {
+    position: sticky !important;
+    z-index: 8 !important;
+    top: 0 !important;
+    display: table-cell !important;
+    height: 42px !important;
+    padding: 0 10px !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--line) !important;
+    border-radius: 0 !important;
+    background: var(--panel-strong) !important;
+  }
+
+  #file-table thead th:nth-child(-n + 2) {
+    display: table-cell !important;
+  }
+
+  #file-table thead .column-movers {
+    display: none !important;
+  }
+
+  #file-table tbody,
+  .note-table tbody,
+  .photo-table tbody {
+    display: table-row-group !important;
+  }
+
+  #file-table tr,
+  .note-table tr,
+  .photo-table tr {
+    position: static !important;
+    display: table-row !important;
+    grid-template-columns: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+  }
+
+  #file-table td,
+  .note-table td,
+  .photo-table td {
+    position: static !important;
+    display: table-cell !important;
+    width: auto !important;
+    min-height: 0 !important;
+    gap: 0 !important;
+    padding: 8px 10px !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--line) !important;
+    vertical-align: middle !important;
+  }
+
+  #file-table td::before,
+  .note-table td::before,
+  .photo-table td::before {
+    display: none !important;
+    content: none !important;
+  }
+
+  #file-table td[data-column="select"],
+  #file-table td[data-column="edit"],
+  #file-table td[data-column="name"],
+  .note-table td:first-child,
+  .note-table td:nth-child(2),
+  .note-table td:nth-child(5) {
+    position: static !important;
+    z-index: auto !important;
+    grid-column: auto !important;
+    padding: 8px 10px !important;
+  }
+
+  .file-name-cell a,
+  .file-name-cell strong {
+    max-width: 235px;
+  }
+
+  .photo-table-preview {
+    width: 46px;
+    height: 46px;
+  }
+
+  .photo-name-stack {
+    min-width: 170px;
+    max-width: 220px;
+  }
+
+  .photo-viewer header .secondary-button::after {
+    content: attr(data-mobile-label);
+  }
+}

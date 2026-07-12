@@ -10,7 +10,7 @@ import { GoogleAuth, OAuth2Client } from "google-auth-library";
 import { google } from "googleapis";
 
 const APP_ID = "drivedock";
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.3.0";
 const PORT = Number(process.env.PORT) || 8080;
 const HARD_MAX_FILE_BYTES = 524288000;
 const MAX_FILE_BYTES = Math.min(
@@ -1390,9 +1390,13 @@ app.get(
       { fileId: file.id, alt: "media", supportsAllDrives: true },
       { responseType: "stream" },
     );
+    const inline = request.query.inline === "1" && String(file.mimeType || "").startsWith("image/");
     response.set("Content-Type", file.mimeType || "application/octet-stream");
     if (file.size) response.set("Content-Length", String(file.size));
-    response.set("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+    response.set(
+      "Content-Disposition",
+      `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+    );
     response.set("Cache-Control", "private, max-age=0, no-store");
     upstream.data.on("error", (error) => response.destroy(error));
     upstream.data.pipe(response);

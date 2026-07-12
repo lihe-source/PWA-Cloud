@@ -19,7 +19,7 @@ const CONFIG = Object.freeze({
 });
 const DEMO_MODE = !CONFIG.API_BASE_URL && CONFIG.DEMO_MODE_WHEN_UNCONFIGURED !== false;
 const APP_ID = "drivedock";
-const APP_VERSION = String(CONFIG.VERSION || "1.2.0");
+const APP_VERSION = String(CONFIG.VERSION || "1.3.0");
 const APP_BUILD_DATE = String(CONFIG.BUILD_DATE || "2026-07-12");
 const APP_CACHE_NAME = String(CONFIG.CACHE_NAME || `drivedock-v${APP_VERSION}`);
 const VERSION_MANIFEST_URL = "./version.json";
@@ -343,6 +343,7 @@ const state = {
   noteExistingAttachments: [],
   noteReadOnly: false,
   viewerPhoto: null,
+  copyingPhotoId: "",
   installPrompt: null,
   apiConfig: null,
   adminSettings: null,
@@ -1146,12 +1147,14 @@ function visiblePhotos() {
 }
 
 function renderPhotos() {
-  const grid = $("#photo-grid");
+  const body = $("#photo-table-body");
   const photos = visiblePhotos();
   const fragment = document.createDocumentFragment();
   photos.forEach((photo) => {
-    const card = make("article", `photo-card${state.selectedPhotos.has(photo.id) ? " is-selected" : ""}`);
-    const selector = make("label", "photo-select");
+    const row = make("tr", state.selectedPhotos.has(photo.id) ? "is-selected" : "");
+
+    const selectTd = make("td");
+    selectTd.dataset.label = "選取";
     const checkbox = make("input");
     checkbox.type = "checkbox";
     checkbox.checked = state.selectedPhotos.has(photo.id);
@@ -1161,36 +1164,68 @@ function renderPhotos() {
       else state.selectedPhotos.delete(photo.id);
       renderPhotos();
     });
-    selector.append(checkbox);
+    selectTd.append(checkbox);
 
-    const open = make("button", "photo-open");
-    open.type = "button";
-    open.setAttribute("aria-label", `開啟 ${photo.name}`);
+    const previewTd = make("td");
+    previewTd.dataset.label = "預覽";
+    const preview = make("button", "photo-table-preview");
+    preview.type = "button";
+    preview.setAttribute("aria-label", `開啟 ${photo.name}`);
     const image = make("img");
     image.src = photo.thumbnailUrl || photo.contentUrl || "./icon-512.png";
-    image.alt = photo.name;
+    image.alt = "";
     image.loading = "lazy";
     image.decoding = "async";
     image.addEventListener("error", () => {
       if (!image.src.endsWith("icon-512.png")) image.src = "./icon-512.png";
     });
-    open.append(image);
-    open.addEventListener("click", () => openPhotoViewer(photo));
+    preview.append(image);
+    preview.addEventListener("click", () => openPhotoViewer(photo));
+    previewTd.append(preview);
 
-    const meta = make("div", "photo-meta");
-    meta.append(make("strong", "", photo.name));
-    const line = make("div", "photo-meta-line");
-    const uploader = make("span", "photo-uploader");
-    uploader.append(make("span", "mini-avatar", initials(uploaderLabel(photo))));
-    uploader.append(make("span", "", uploaderLabel(photo)));
-    line.append(uploader);
-    line.append(make("span", "", `${formatDate(photo.createdTime, false)} · ${formatBytes(photo.sizeBytes)}`));
-    meta.append(line);
-    card.append(selector, open, meta);
-    fragment.append(card);
+    const nameTd = make("td");
+    nameTd.dataset.label = "檔案名稱";
+    const nameStack = make("span", "cell-stack photo-name-stack");
+    nameStack.append(make("strong", "", photo.name));
+    nameStack.append(make("small", "", photo.mimeType || "圖片"));
+    nameTd.append(nameStack);
+
+    const uploaderTd = make("td");
+    uploaderTd.dataset.label = "上傳者";
+    uploaderTd.append(makeUploaderCell(photo));
+
+    const timeTd = make("td");
+    timeTd.dataset.label = "上傳時間";
+    const timeStack = make("span", "cell-stack");
+    timeStack.append(make("strong", "", formatDate(photo.createdTime, false)));
+    timeStack.append(make("small", "", new Date(photo.createdTime).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false })));
+    timeTd.append(timeStack);
+
+    const sizeTd = make("td", "", formatBytes(photo.sizeBytes));
+    sizeTd.dataset.label = "大小";
+
+    const actionTd = make("td");
+    actionTd.dataset.label = "操作";
+    const actions = make("div", "table-row-actions");
+    const view = make("button", "row-action row-action-text", "預覽");
+    view.type = "button";
+    view.addEventListener("click", () => openPhotoViewer(photo));
+    const copy = make("button", "row-action row-action-text photo-copy-action", state.copyingPhotoId === photo.id ? "處理中" : "複製");
+    copy.type = "button";
+    copy.dataset.photoId = photo.id;
+    copy.disabled = Boolean(state.copyingPhotoId);
+    copy.setAttribute("aria-label", `複製 ${photo.name}`);
+    copy.addEventListener("click", () => copyCurrentPhoto(photo));
+    actions.append(view, copy);
+    actionTd.append(actions);
+
+    row.append(selectTd, previewTd, nameTd, uploaderTd, timeTd, sizeTd, actionTd);
+    fragment.append(row);
   });
-  grid.replaceChildren(fragment);
+  body.replaceChildren(fragment);
+  $("#photo-count").textContent = String(photos.length);
   $("#photo-empty").hidden = photos.length > 0;
+  $("#photo-table").hidden = photos.length === 0;
   $("#selected-photo-count").textContent = String(state.selectedPhotos.size);
   $("#delete-photos").disabled = state.selectedPhotos.size === 0 || !state.canManage || !navigator.onLine;
 }
@@ -1228,36 +1263,141 @@ function openPhotoViewer(photo) {
   const image = $("#photo-viewer-image");
   image.src = photo.contentUrl || photo.thumbnailUrl;
   image.alt = photo.name;
-  openModal("photo-viewer", $("#copy-photo"));
+  const copyButton = $("#copy-photo");
+  copyButton.disabled = Boolean(state.copyingPhotoId);
+  copyButton.dataset.mobileLabel = state.copyingPhotoId ? "處理中" : "複製";
+  openModal("photo-viewer", copyButton);
 }
 
-async function copyCurrentPhoto() {
-  const photo = state.viewerPhoto;
-  if (!photo) return;
+function appendUrlParameter(value, key, parameterValue) {
+  try {
+    const url = new URL(value, location.href);
+    url.searchParams.set(key, parameterValue);
+    return url.href;
+  } catch {
+    const separator = String(value).includes("?") ? "&" : "?";
+    return `${value}${separator}${encodeURIComponent(key)}=${encodeURIComponent(parameterValue)}`;
+  }
+}
+
+function photoCopySources(photo) {
+  const sources = [];
+  const add = (value) => {
+    if (!value || sources.includes(value)) return;
+    sources.push(value);
+  };
+  if (!String(photo.id).startsWith("demo-")) {
+    add(appendUrlParameter(apiUrl(`/api/files/${encodeURIComponent(photo.id)}/content`), "inline", "1"));
+  }
+  add(photo.contentUrl);
+  add(photo.thumbnailUrl);
+  return sources;
+}
+
+async function imageBlobToPng(blob) {
+  if (!(blob instanceof Blob) || !blob.size) throw new Error("圖片內容為空白");
+  if (blob.type === "image/png") return blob;
+
+  let source;
+  let width;
+  let height;
+  let cleanup = () => {};
+  try {
+    if (typeof createImageBitmap === "function") {
+      source = await createImageBitmap(blob);
+      width = source.width;
+      height = source.height;
+      cleanup = () => source.close?.();
+    } else {
+      const objectUrl = URL.createObjectURL(blob);
+      const image = new Image();
+      cleanup = () => URL.revokeObjectURL(objectUrl);
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = () => reject(new Error("瀏覽器無法解碼這張圖片"));
+        image.src = objectUrl;
+      });
+      source = image;
+      width = image.naturalWidth;
+      height = image.naturalHeight;
+    }
+
+    if (!width || !height) throw new Error("圖片尺寸無效");
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { alpha: true });
+    if (!context) throw new Error("瀏覽器無法建立圖片轉換區");
+    context.drawImage(source, 0, 0, width, height);
+    return await new Promise((resolve, reject) =>
+      canvas.toBlob(
+        (result) => (result ? resolve(result) : reject(new Error("無法將圖片轉換為 PNG"))),
+        "image/png",
+      ),
+    );
+  } finally {
+    cleanup();
+  }
+}
+
+async function fetchPhotoAsPng(photo) {
+  let lastError = new Error("找不到可用的圖片來源");
+  for (const source of photoCopySources(photo)) {
+    try {
+      const response = await fetch(source, {
+        credentials: "include",
+        cache: "no-store",
+        headers: { Accept: "image/png,image/*;q=0.9,*/*;q=0.1" },
+      });
+      if (!response.ok) throw new Error(`圖片回應 ${response.status}`);
+      const blob = await response.blob();
+      if (!blob.type.startsWith("image/")) {
+        throw new Error(`伺服器回傳的內容不是圖片（${blob.type || "未知格式"}）`);
+      }
+      return await imageBlobToPng(blob);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+function setPhotoCopyBusy(photo, busy) {
+  state.copyingPhotoId = busy ? photo.id : "";
+  const viewerButton = $("#copy-photo");
+  if (viewerButton) {
+    viewerButton.disabled = busy;
+    viewerButton.setAttribute("aria-busy", busy ? "true" : "false");
+    viewerButton.textContent = busy ? "複製中…" : "複製圖片";
+    viewerButton.dataset.mobileLabel = busy ? "處理中" : "複製";
+  }
+  $$(".photo-copy-action").forEach((button) => {
+    button.disabled = busy;
+    if (button.dataset.photoId === photo.id) button.textContent = busy ? "處理中" : "複製";
+  });
+}
+
+async function copyCurrentPhoto(photoOverride = null) {
+  const photo = photoOverride || state.viewerPhoto;
+  if (!photo || state.copyingPhotoId) return;
   if (!globalThis.ClipboardItem || !navigator.clipboard?.write) {
-    showToast("這個瀏覽器不支援直接複製圖片，請長按或另存圖片", "error");
+    showToast("此瀏覽器不支援直接複製圖片，請長按圖片後選擇「拷貝」", "error");
     return;
   }
+
+  setPhotoCopyBusy(photo, true);
   try {
-    const response = await fetch(photo.contentUrl || photo.thumbnailUrl, { credentials: "include" });
-    if (!response.ok) throw new Error(`圖片回應 ${response.status}`);
-    let blob = await response.blob();
-    if (!blob.type.startsWith("image/")) blob = blob.slice(0, blob.size, photo.mimeType || "image/png");
-    if (blob.type !== "image/png") {
-      const bitmap = await createImageBitmap(blob);
-      const canvas = document.createElement("canvas");
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      canvas.getContext("2d").drawImage(bitmap, 0, 0);
-      bitmap.close?.();
-      blob = await new Promise((resolve, reject) =>
-        canvas.toBlob((result) => (result ? resolve(result) : reject(new Error("無法轉換為 PNG"))), "image/png"),
-      );
-    }
-    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-    showToast("圖片已複製到剪貼簿");
+    // Safari / iOS 必須在點擊事件仍具使用者授權時呼叫 clipboard.write。
+    // 將圖片讀取與 PNG 轉換包在 ClipboardItem Promise 內，可避免非同步處理後授權失效。
+    const pngPromise = fetchPhotoAsPng(photo);
+    const item = new ClipboardItem({ "image/png": pngPromise });
+    await navigator.clipboard.write([item]);
+    showToast("圖片已複製，可直接貼到支援圖片的 App");
   } catch (error) {
-    showToast(`無法複製圖片：${error.message}`, "error");
+    console.error("DriveDock photo copy failed", error);
+    showToast(`無法複製圖片：${error.message || "請長按圖片後選擇「拷貝」"}`, "error");
+  } finally {
+    setPhotoCopyBusy(photo, false);
   }
 }
 
@@ -2463,7 +2603,12 @@ function trapModalFocus(event) {
 }
 
 function showToast(message, type = "success") {
+  $$(".toast", $("#toast-region")).forEach((entry) => {
+    if (entry.dataset.message === message && entry.dataset.type === type) entry.remove();
+  });
   const toast = make("div", `toast${type === "error" ? " is-error" : ""}`);
+  toast.dataset.message = message;
+  toast.dataset.type = type;
   toast.setAttribute("role", type === "error" ? "alert" : "status");
   toast.append(make("span", "toast-icon", type === "error" ? "!" : "✓"));
   toast.append(make("span", "", message));

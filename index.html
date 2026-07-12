@@ -77,7 +77,7 @@
           </div>
 
           <div class="topbar-actions">
-            <span class="top-version-badge" id="top-version-badge" aria-label="目前應用程式版本" title="目前應用程式版本"><span class="top-version-label">目前</span><strong id="top-version-value">V1.2.0</strong></span>
+            <span class="top-version-badge" id="top-version-badge" aria-label="目前應用程式版本" title="目前應用程式版本"><span class="top-version-label">目前</span><strong id="top-version-value">V1.3.0</strong></span>
             <span class="sync-pill" id="sync-pill">
               <span class="status-dot" aria-hidden="true"></span>
               <span>Drive 檢查中</span>
@@ -159,7 +159,7 @@
                 <span>只有 API 管理員或 Drive 擁有者可以重新命名與刪除。</span>
               </div>
 
-              <div class="table-wrap">
+              <div class="table-wrap list-scroll-wrap file-table-wrap">
                 <table class="data-table" id="file-table">
                   <caption class="sr-only">Google Drive 檔案列表；點欄名排序，拖曳欄名調整順序。</caption>
                   <thead id="file-table-head"></thead>
@@ -199,7 +199,7 @@
                 </div>
                 <button class="secondary-button" id="refresh-notes" type="button">↻ 重新整理</button>
               </div>
-              <div class="table-wrap">
+              <div class="table-wrap list-scroll-wrap note-table-wrap">
                 <table class="data-table note-table">
                   <thead>
                     <tr>
@@ -246,13 +246,38 @@
               </div>
             </div>
 
-            <div class="photo-grid" id="photo-grid" aria-live="polite"></div>
-            <div class="empty-state photo-empty" id="photo-empty" hidden>
-              <span class="empty-icon" aria-hidden="true">▧</span>
-              <h3>圖庫還是空的</h3>
-              <p>拖入圖片、按上傳，或在電腦直接按 Ctrl+V。</p>
-              <button class="primary-button" type="button" data-open-upload="photo">上傳圖片</button>
-            </div>
+            <section class="content-panel photo-list-panel" aria-labelledby="photo-list-title">
+              <div class="panel-head compact-panel-head">
+                <div>
+                  <span class="section-kicker">PHOTO INDEX</span>
+                  <h2 id="photo-list-title">相片列表 <span class="count-badge" id="photo-count">0</span></h2>
+                </div>
+                <small class="list-scroll-hint">標題列固定，可上下滾動查看更多相片</small>
+              </div>
+              <div class="table-wrap list-scroll-wrap photo-table-wrap">
+                <table class="data-table photo-table" id="photo-table">
+                  <caption class="sr-only">Google Drive 相片列表；可選取、預覽與複製圖片。</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">選取</th>
+                      <th scope="col">預覽</th>
+                      <th scope="col">檔案名稱</th>
+                      <th scope="col">上傳者</th>
+                      <th scope="col">上傳時間</th>
+                      <th scope="col">大小</th>
+                      <th scope="col">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="photo-table-body" aria-live="polite"></tbody>
+                </table>
+                <div class="empty-state photo-empty" id="photo-empty" hidden>
+                  <span class="empty-icon" aria-hidden="true">▧</span>
+                  <h3>圖庫還是空的</h3>
+                  <p>拖入圖片、按上傳，或在電腦直接按 Ctrl+V。</p>
+                  <button class="primary-button" type="button" data-open-upload="photo">上傳圖片</button>
+                </div>
+              </div>
+            </section>
           </section>
 
           <section class="page" id="page-settings" data-route="settings" aria-labelledby="settings-title">
@@ -262,7 +287,7 @@
                 <h2 id="settings-title">系統設定</h2>
                 <p>集中檢查前端、Google Drive、登入、權限、隱私與 PWA 部署資訊。</p>
               </div>
-              <span class="version-pill" id="settings-version-pill">V1.2.0</span>
+              <span class="version-pill" id="settings-version-pill">V1.3.0</span>
             </div>
 
             <section class="settings-overview" aria-label="系統狀態摘要">
@@ -283,7 +308,7 @@
               </button>
               <button type="button" class="settings-overview-card is-version" data-setting-target="version">
                 <span>應用程式版本</span>
-                <strong id="overview-version">V1.2.0</strong>
+                <strong id="overview-version">V1.3.0</strong>
                 <small id="overview-update-state">自動檢查更新</small>
               </button>
             </section>
@@ -471,10 +496,10 @@
                 <div class="setting-body version-control">
                   <dl class="definition-grid version-definition-grid">
                     <div><dt>應用程式</dt><dd>雲匣 DriveDock</dd></div>
-                    <div><dt>目前版本</dt><dd id="current-version-value">V1.2.0</dd></div>
+                    <div><dt>目前版本</dt><dd id="current-version-value">V1.3.0</dd></div>
                     <div><dt>最新版本</dt><dd id="latest-version-value">檢查中</dd></div>
                     <div><dt>最新建置日期</dt><dd id="build-date-value">2026-07-12</dd></div>
-                    <div><dt>最新快取版本</dt><dd id="cache-version-value">drivedock-v1.2.0</dd></div>
+                    <div><dt>最新快取版本</dt><dd id="cache-version-value">drivedock-v1.3.0</dd></div>
                     <div><dt>上次檢查</dt><dd id="last-update-check">尚未檢查</dd></div>
                   </dl>
                   <div class="update-status-panel" id="update-status-panel" data-state="checking" role="status" aria-live="polite">
@@ -624,7 +649,7 @@
           <div><strong id="photo-viewer-title">圖片預覽</strong><small id="photo-viewer-meta"></small></div>
           <div>
             <span class="paste-hint"><kbd>Ctrl</kbd> + <kbd>C</kbd> 複製圖片</span>
-            <button class="secondary-button compact" id="copy-photo" type="button">複製圖片</button>
+            <button class="secondary-button compact" id="copy-photo" type="button" data-mobile-label="複製">複製圖片</button>
             <button class="icon-button" type="button" data-close-modal aria-label="關閉圖片預覽">×</button>
           </div>
         </header>
