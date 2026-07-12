@@ -10,7 +10,7 @@ import { GoogleAuth, OAuth2Client } from "google-auth-library";
 import { google } from "googleapis";
 
 const APP_ID = "drivedock";
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.1.0";
 const PORT = Number(process.env.PORT) || 8080;
 const HARD_MAX_FILE_BYTES = 524288000;
 const MAX_FILE_BYTES = Math.min(
@@ -23,9 +23,18 @@ const UPLOAD_CHUNK_BYTES = Math.min(
   64 * 1024 * 1024,
   Math.max(DRIVE_CHUNK_UNIT, Math.floor(requestedChunkBytes / DRIVE_CHUNK_UNIT) * DRIVE_CHUNK_UNIT),
 );
-const DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID || "";
+const ENV_DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID || "";
 const DRIVE_SHARED_DRIVE_ID = process.env.DRIVE_SHARED_DRIVE_ID || "";
-const GOOGLE_WEB_CLIENT_ID = process.env.GOOGLE_WEB_CLIENT_ID || "";
+const ENV_GOOGLE_WEB_CLIENT_ID = process.env.GOOGLE_WEB_CLIENT_ID || "";
+const DRIVEDOCK_INSTANCE_ID = String(process.env.DRIVEDOCK_INSTANCE_ID || process.env.K_SERVICE || APP_ID)
+  .trim()
+  .slice(0, 100);
+const SETTINGS_FILE_NAME = ".drivedock-config.json";
+const SETTINGS_CACHE_TTL_MS = Math.min(
+  60 * 1000,
+  Math.max(1000, Number(process.env.SETTINGS_CACHE_TTL_MS) || 15 * 1000),
+);
+const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS) || 30 * 24 * 60 * 60;
 const SESSION_SAME_SITE = ["lax", "strict", "none"].includes(process.env.SESSION_SAME_SITE)
   ? process.env.SESSION_SAME_SITE
@@ -74,9 +83,18 @@ app.use(
   }),
 );
 app.use(express.json({ limit: "96kb", strict: true }));
-app.use((request, _response, next) => {
+app.use((request, response, next) => {
   request.user = readSession(request);
-  next();
+  if (!request.user || !request.path.startsWith("/api/")) return next();
+  return getRuntimeSettings()
+    .then((settings) => {
+      if (settings.googleClientId && request.user?.clientId !== settings.googleClientId) {
+        request.user = null;
+        clearSessionCookie(response);
+      }
+      return next();
+    })
+    .catch(next);
 });
 
 const generalLimiter = rateLimit({
@@ -98,7 +116,9 @@ app.use("/api", generalLimiter);
 
 let driveClientPromise;
 let drivePromise;
-const googleIdVerifier = new OAuth2Client(GOOGLE_WEB_CLIENT_ID || undefined);
+let runtimeSettingsCache = null;
+let runtimeSettingsPromise = null;
+let runtimeSettingsGeneration = 0;
 
 function splitCsv(value = "") {
   return String(value)
@@ -117,6 +137,12 @@ function ensureMutationOrigin(request, _response, next) {
   const origin = request.get("Origin");
   if (!origin || isAllowedOrigin(origin)) return next();
   return next(httpError(403, "ORIGIN_NOT_ALLOWED", "此網站來源未獲 API 授權"));
+}
+
+function requireMutationOrigin(request, _response, next) {
+  const origin = request.get("Origin");
+  if (origin && isAllowedOrigin(origin)) return next();
+  return next(httpError(403, "ORIGIN_REQUIRED", "設定變更必須來自允許的網站來源"));
 }
 
 function asyncRoute(handler) {
@@ -186,6 +212,7 @@ function readSession(request) {
     picture: String(payload.picture || ""),
     email: String(payload.email || ""),
     emailVerified: Boolean(payload.emailVerified),
+    clientId: String(payload.clientId || ""),
   };
 }
 
@@ -219,7 +246,14 @@ function isAdmin(user) {
 function requireAdmin(request, _response, next) {
   if (!request.user) return next(httpError(401, "AUTH_REQUIRED", "請先使用 Google 帳戶登入"));
   if (!isAdmin(request.user)) return next(httpError(403, "ADMIN_REQUIRED", "此操作只開放 API 管理員"));
-  return next();
+  return getRuntimeSettings()
+    .then((settings) => {
+      if (settings.googleClientId && request.user.clientId !== settings.googleClientId) {
+        return next(httpError(401, "AUTH_AUDIENCE_CHANGED", "Google 登入設定已變更，請重新登入"));
+      }
+      return next();
+    })
+    .catch(next);
 }
 
 function stableHash(value) {
@@ -332,8 +366,367 @@ async function getDrive() {
   return drivePromise;
 }
 
-function assertDriveConfigured() {
-  if (!DRIVE_FOLDER_ID) throw httpError(503, "DRIVE_NOT_CONFIGURED", "尚未設定 Google Drive 資料夾");
+function validateGoogleClientId(value, { required = true } = {}) {
+  const clientId = String(value || "").trim();
+  if (!clientId && !required) return "";
+  if (
+    !clientId ||
+    clientId.length > 255 ||
+    !/^\d+-[a-z0-9_-]+\.apps\.googleusercontent\.com$/i.test(clientId)
+  ) {
+    throw httpError(400, "INVALID_GOOGLE_CLIENT_ID", "Google OAuth Client ID 格式不正確");
+  }
+  return clientId;
+}
+
+function settingsRootId() {
+  return DRIVE_SHARED_DRIVE_ID || "root";
+}
+
+function driveCorpusParameters(driveId = DRIVE_SHARED_DRIVE_ID) {
+  return driveId ? { corpora: "drive", driveId } : { corpora: "user" };
+}
+
+function settingsFileQuery() {
+  return [
+    "trashed=false",
+    `name='${driveQueryValue(SETTINGS_FILE_NAME)}'`,
+    `appProperties has { key='appId' and value='${APP_ID}' }`,
+    `appProperties has { key='entity' and value='appConfig' }`,
+    `appProperties has { key='instanceId' and value='${driveQueryValue(DRIVEDOCK_INSTANCE_ID)}' }`,
+  ].join(" and ");
+}
+
+async function locateSettingsFile() {
+  const drive = await getDrive();
+  const result = await drive.files.list({
+    q: settingsFileQuery(),
+    pageSize: 10,
+    fields: "nextPageToken,files(id,name,mimeType,createdTime,modifiedTime,parents,appProperties)",
+    spaces: "drive",
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+    ...driveCorpusParameters(),
+  });
+  const files = result.data.files || [];
+  if (files.length > 1 || result.data.nextPageToken) {
+    throw httpError(
+      409,
+      "CONFIG_CONFLICT",
+      "Drive 中有多份有效的 DriveDock 設定檔，請由管理員移除重複設定",
+      false,
+      { ids: files.map((file) => file.id) },
+    );
+  }
+  return files[0] || null;
+}
+
+async function readSettingsFile(file) {
+  if (!file) return null;
+  const drive = await getDrive();
+  let media;
+  try {
+    media = await drive.files.get(
+      { fileId: file.id, alt: "media", supportsAllDrives: true },
+      { responseType: "text" },
+    );
+  } catch (error) {
+    if (Number(error?.code) === 404) return null;
+    throw error;
+  }
+  try {
+    const parsed = typeof media.data === "object" ? media.data : JSON.parse(String(media.data || "{}"));
+    if (!parsed || typeof parsed !== "object" || Number(parsed.schema) !== 1) throw new Error("schema");
+    const googleClientId = parsed.googleClientId
+      ? validateGoogleClientId(parsed.googleClientId)
+      : "";
+    const folderId = String(parsed.folderId || "").trim().slice(0, 200);
+    if (folderId && !/^[a-z0-9_-]+$/i.test(folderId)) throw new Error("folderId");
+    return {
+      schema: 1,
+      revision: Math.max(0, Number(parsed.revision) || 0),
+      googleClientId,
+      folderId,
+      folderName: String(parsed.folderName || "").normalize("NFC").trim().slice(0, 255),
+      driveId: String(parsed.driveId || "").trim().slice(0, 200),
+      updatedAt: String(parsed.updatedAt || ""),
+    };
+  } catch {
+    throw httpError(503, "CONFIG_INVALID", "DriveDock 共用設定檔格式不正確");
+  }
+}
+
+async function inspectDriveFolder(folderId) {
+  const drive = await getDrive();
+  let result;
+  try {
+    result = await drive.files.get({
+      fileId: folderId,
+      supportsAllDrives: true,
+      fields: "id,name,mimeType,trashed,driveId,parents,capabilities(canAddChildren,canEdit)",
+    });
+  } catch (error) {
+    if (Number(error?.code) === 404) {
+      throw httpError(422, "DRIVE_FOLDER_NOT_FOUND", "找不到指定的 Google Drive 資料夾");
+    }
+    throw error;
+  }
+  const folder = result.data || {};
+  if (folder.trashed || folder.mimeType !== DRIVE_FOLDER_MIME_TYPE) {
+    throw httpError(422, "DRIVE_FOLDER_INVALID", "指定項目不是可用的 Google Drive 資料夾");
+  }
+  if (DRIVE_SHARED_DRIVE_ID && folder.driveId !== DRIVE_SHARED_DRIVE_ID) {
+    throw httpError(422, "DRIVE_SCOPE_MISMATCH", "資料夾不在後端所設定的 Shared Drive 範圍內");
+  }
+  if (!folder.capabilities?.canAddChildren) {
+    throw httpError(422, "DRIVE_FOLDER_NOT_WRITABLE", "後端 Google Drive 帳戶沒有此資料夾的新增內容權限");
+  }
+  return {
+    id: String(folder.id),
+    name: String(folder.name || "").normalize("NFC").trim().slice(0, 255),
+    driveId: String(folder.driveId || ""),
+  };
+}
+
+async function loadRuntimeSettings() {
+  const configFile = await locateSettingsFile();
+  const stored = await readSettingsFile(configFile);
+  const googleClientId = stored?.googleClientId || validateGoogleClientId(ENV_GOOGLE_WEB_CLIENT_ID, { required: false });
+  const folderId = stored?.folderId || String(ENV_DRIVE_FOLDER_ID).trim();
+  const settings = {
+    revision: stored?.revision || 0,
+    googleClientId,
+    folderId,
+    folderName: stored?.folderName || "",
+    driveId: stored?.driveId || "",
+    configFileId: configFile?.id || "",
+    configFileParents: Array.isArray(configFile?.parents) ? configFile.parents.map(String) : [],
+    setupRequired: !googleClientId || !folderId,
+    folderMetadata: null,
+    folderValidationError: null,
+  };
+  if (folderId) {
+    try {
+      settings.folderMetadata = await inspectDriveFolder(folderId);
+      settings.folderId = settings.folderMetadata.id;
+      settings.folderName = settings.folderMetadata.name;
+      settings.driveId = settings.folderMetadata.driveId;
+    } catch (error) {
+      settings.folderValidationError = error;
+      settings.setupRequired = true;
+    }
+  }
+  return settings;
+}
+
+async function getRuntimeSettings({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && runtimeSettingsCache && runtimeSettingsCache.expiresAt > now) {
+    return runtimeSettingsCache.value;
+  }
+  if (!force && runtimeSettingsPromise) return runtimeSettingsPromise;
+  const generation = runtimeSettingsGeneration;
+  const pending = loadRuntimeSettings().then((value) => {
+    if (generation === runtimeSettingsGeneration) {
+      runtimeSettingsCache = { value, expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS };
+    }
+    return value;
+  });
+  runtimeSettingsPromise = pending;
+  try {
+    return await pending;
+  } finally {
+    if (runtimeSettingsPromise === pending) runtimeSettingsPromise = null;
+  }
+}
+
+function invalidateRuntimeSettings() {
+  runtimeSettingsGeneration += 1;
+  runtimeSettingsCache = null;
+}
+
+async function getStorageContext() {
+  const settings = await getRuntimeSettings();
+  assertDriveConfigured(settings);
+  if (settings.folderValidationError) throw settings.folderValidationError;
+  const folder = settings.folderMetadata || (await inspectDriveFolder(settings.folderId));
+  return {
+    ...settings,
+    folderId: folder.id,
+    folderName: folder.name,
+    driveId: folder.driveId,
+  };
+}
+
+function assertDriveConfigured(settings) {
+  if (!settings?.folderId) throw httpError(503, "DRIVE_NOT_CONFIGURED", "尚未設定 Google Drive 資料夾");
+}
+
+function parseFolderInput(value) {
+  const input = String(value || "").normalize("NFC").trim();
+  if (!input || input.length > 1000) {
+    throw httpError(400, "DRIVE_FOLDER_INPUT_REQUIRED", "請輸入 Google Drive 資料夾名稱、網址或 ID");
+  }
+  if (/^https?:\/\//i.test(input)) {
+    let url;
+    try {
+      url = new URL(input);
+    } catch {
+      throw httpError(400, "INVALID_DRIVE_FOLDER_URL", "Google Drive 資料夾網址格式不正確");
+    }
+    if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "drive.google.com") {
+      throw httpError(400, "INVALID_DRIVE_FOLDER_URL", "只接受 drive.google.com 的 HTTPS 資料夾網址");
+    }
+    const pathMatch = url.pathname.match(/\/folders\/([a-z0-9_-]+)/i);
+    const id = pathMatch?.[1] || url.searchParams.get("id") || "";
+    if (!/^[a-z0-9_-]{10,200}$/i.test(id)) {
+      throw httpError(400, "INVALID_DRIVE_FOLDER_URL", "網址中沒有有效的 Google Drive 資料夾 ID");
+    }
+    return { kind: "id", id };
+  }
+  if (/^[a-z0-9_-]{20,200}$/i.test(input)) return { kind: "id", id: input };
+  if (input.length > 200 || /[\u0000-\u001f\u007f\\/]/.test(input)) {
+    throw httpError(400, "INVALID_DRIVE_FOLDER_NAME", "Google Drive 資料夾名稱格式不正確");
+  }
+  return { kind: "name", name: input };
+}
+
+async function resolveOrCreateFolder(folderInput) {
+  const parsed = parseFolderInput(folderInput);
+  if (parsed.kind === "id") {
+    return { folder: await inspectDriveFolder(parsed.id), created: false };
+  }
+  const drive = await getDrive();
+  const result = await drive.files.list({
+    q: [
+      `'${driveQueryValue(settingsRootId())}' in parents`,
+      "trashed=false",
+      `mimeType='${DRIVE_FOLDER_MIME_TYPE}'`,
+      `name='${driveQueryValue(parsed.name)}'`,
+    ].join(" and "),
+    pageSize: 10,
+    fields: "nextPageToken,files(id,name,mimeType,trashed,driveId,parents,capabilities(canAddChildren,canEdit))",
+    spaces: "drive",
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+    ...driveCorpusParameters(),
+  });
+  const matches = result.data.files || [];
+  if (matches.length > 1 || result.data.nextPageToken) {
+    throw httpError(
+      409,
+      "AMBIGUOUS_DRIVE_FOLDER",
+      "找到多個同名資料夾，請改貼資料夾網址或 ID",
+      false,
+      { candidates: matches.map((folder) => ({ id: folder.id, name: folder.name })) },
+    );
+  }
+  if (matches.length === 1) {
+    return { folder: await inspectDriveFolder(matches[0].id), created: false };
+  }
+  const created = await drive.files.create({
+    supportsAllDrives: true,
+    requestBody: {
+      name: parsed.name,
+      mimeType: DRIVE_FOLDER_MIME_TYPE,
+      parents: [settingsRootId()],
+    },
+    fields: "id,name,mimeType,trashed,driveId,parents,capabilities(canAddChildren,canEdit)",
+  });
+  return { folder: await inspectDriveFolder(created.data.id), created: true };
+}
+
+async function hasManagedData(storage) {
+  if (!storage?.folderId) return false;
+  const drive = await getDrive();
+  let pageToken;
+  do {
+    const result = await drive.files.list({
+      q: [
+        `'${driveQueryValue(storage.folderId)}' in parents`,
+        "trashed=false",
+        `appProperties has { key='appId' and value='${APP_ID}' }`,
+      ].join(" and "),
+      pageSize: 100,
+      pageToken,
+      fields: "nextPageToken,files(id,appProperties)",
+      spaces: "drive",
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+      ...driveCorpusParameters(storage.driveId),
+    });
+    if ((result.data.files || []).some((file) => file.appProperties?.entity !== "appConfig")) return true;
+    pageToken = result.data.nextPageToken || undefined;
+  } while (pageToken);
+  return false;
+}
+
+async function saveRuntimeSettings({ googleClientId, folder, current, updatedBy }) {
+  const drive = await getDrive();
+  const next = {
+    schema: 1,
+    revision: Number(current.revision || 0) + 1,
+    googleClientId,
+    folderId: folder.id,
+    folderName: folder.name,
+    driveId: folder.driveId || "",
+    updatedAt: new Date().toISOString(),
+    updatedBy: stableHash(updatedBy?.sub || "unknown"),
+  };
+  const body = JSON.stringify(next, null, 2);
+  if (current.configFileId) {
+    const currentParents = Array.isArray(current.configFileParents) ? current.configFileParents : [];
+    const removeParents = currentParents.filter((parentId) => parentId !== folder.id);
+    await drive.files.update({
+      fileId: current.configFileId,
+      supportsAllDrives: true,
+      ...(currentParents.includes(folder.id) ? {} : { addParents: folder.id }),
+      ...(removeParents.length ? { removeParents: removeParents.join(",") } : {}),
+      requestBody: {
+        name: SETTINGS_FILE_NAME,
+        mimeType: "application/json",
+        appProperties: {
+          appId: APP_ID,
+          entity: "appConfig",
+          instanceId: DRIVEDOCK_INSTANCE_ID,
+          schema: "1",
+        },
+      },
+      media: { mimeType: "application/json", body: Readable.from([body]) },
+    });
+  } else {
+    await drive.files.create({
+      supportsAllDrives: true,
+      requestBody: {
+        name: SETTINGS_FILE_NAME,
+        parents: [folder.id],
+        mimeType: "application/json",
+        appProperties: {
+          appId: APP_ID,
+          entity: "appConfig",
+          instanceId: DRIVEDOCK_INSTANCE_ID,
+          schema: "1",
+        },
+      },
+      media: { mimeType: "application/json", body: Readable.from([body]) },
+    });
+  }
+  invalidateRuntimeSettings();
+  return getRuntimeSettings({ force: true });
+}
+
+function publicSettingsRecord(settings) {
+  return {
+    revision: settings.revision,
+    googleClientId: settings.googleClientId,
+    folderId: settings.folderId,
+    folderName: settings.folderName,
+    folderWebViewLink: settings.folderId
+      ? `https://drive.google.com/drive/folders/${encodeURIComponent(settings.folderId)}`
+      : "",
+    driveId: settings.driveId,
+    setupRequired: settings.setupRequired,
+  };
 }
 
 function publicApiOrigin(request) {
@@ -411,9 +804,9 @@ async function readDriveFilePrefix(fileId) {
   return Buffer.from(value || []).subarray(0, 32);
 }
 
-function driveListParameters(entity, pageSize = 100, pageToken) {
+function driveListParameters(storage, entity, pageSize = 100, pageToken) {
   const q = [
-    `'${DRIVE_FOLDER_ID.replace(/'/g, "\\'")}' in parents`,
+    `'${driveQueryValue(storage.folderId)}' in parents`,
     "trashed=false",
     `appProperties has { key='appId' and value='${APP_ID}' }`,
     `appProperties has { key='entity' and value='${entity}' }`,
@@ -429,14 +822,13 @@ function driveListParameters(entity, pageSize = 100, pageToken) {
     spaces: "drive",
     supportsAllDrives: true,
     includeItemsFromAllDrives: true,
-    ...(DRIVE_SHARED_DRIVE_ID
-      ? { corpora: "drive", driveId: DRIVE_SHARED_DRIVE_ID }
-      : { corpora: "user" }),
+    ...driveCorpusParameters(storage.driveId),
   };
 }
 
-async function getManagedFile(fileId, { ready = true } = {}) {
-  assertDriveConfigured();
+async function getManagedFile(fileId, { ready = true, storage = null } = {}) {
+  const context = storage || (await getStorageContext());
+  assertDriveConfigured(context);
   const drive = await getDrive();
   let result;
   try {
@@ -450,7 +842,7 @@ async function getManagedFile(fileId, { ready = true } = {}) {
     throw error;
   }
   const file = result.data;
-  const managed = file.appProperties?.appId === APP_ID && file.parents?.includes(DRIVE_FOLDER_ID) && !file.trashed;
+  const managed = file.appProperties?.appId === APP_ID && file.parents?.includes(context.folderId) && !file.trashed;
   const readableStatuses = new Set(["ready", "published", "attached"]);
   if (!managed || (ready && !readableStatuses.has(file.appProperties?.status))) {
     throw httpError(404, "FILE_NOT_FOUND", "找不到檔案");
@@ -462,13 +854,14 @@ function driveQueryValue(value) {
   return String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
-async function listAllManagedWithQuery(extraQuery, maxItems = 5000) {
-  assertDriveConfigured();
+async function listAllManagedWithQuery(extraQuery, maxItems = 5000, storage = null) {
+  const context = storage || (await getStorageContext());
+  assertDriveConfigured(context);
   const drive = await getDrive();
   const files = [];
   let pageToken;
   const baseQuery = [
-    `'${driveQueryValue(DRIVE_FOLDER_ID)}' in parents`,
+    `'${driveQueryValue(context.folderId)}' in parents`,
     "trashed=false",
     `appProperties has { key='appId' and value='${APP_ID}' }`,
     extraQuery,
@@ -485,9 +878,7 @@ async function listAllManagedWithQuery(extraQuery, maxItems = 5000) {
       spaces: "drive",
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
-      ...(DRIVE_SHARED_DRIVE_ID
-        ? { corpora: "drive", driveId: DRIVE_SHARED_DRIVE_ID }
-        : { corpora: "user" }),
+      ...driveCorpusParameters(context.driveId),
     });
     files.push(...(result.data.files || []));
     pageToken = result.data.nextPageToken || undefined;
@@ -495,17 +886,24 @@ async function listAllManagedWithQuery(extraQuery, maxItems = 5000) {
   return files.slice(0, maxItems);
 }
 
-async function adminStorageCandidates() {
+async function adminStorageCandidates(storage = null) {
+  const context = storage || (await getStorageContext());
   const [pending, readyAttachments, attachedAttachments, publishedNotes] = await Promise.all([
-    listAllManagedWithQuery("appProperties has { key='status' and value='pending' }"),
+    listAllManagedWithQuery("appProperties has { key='status' and value='pending' }", 5000, context),
     listAllManagedWithQuery(
       "appProperties has { key='entity' and value='noteAttachment' } and appProperties has { key='status' and value='ready' }",
+      5000,
+      context,
     ),
     listAllManagedWithQuery(
       "appProperties has { key='entity' and value='noteAttachment' } and appProperties has { key='status' and value='attached' }",
+      5000,
+      context,
     ),
     listAllManagedWithQuery(
       "appProperties has { key='entity' and value='note' } and appProperties has { key='status' and value='published' }",
+      5000,
+      context,
     ),
   ]);
   const activeNoteIds = new Set(publishedNotes.map((file) => file.appProperties?.noteId).filter(Boolean));
@@ -517,44 +915,153 @@ async function adminStorageCandidates() {
   return [...unique.values()];
 }
 
-app.get("/api/health", (_request, response) => {
-  sendData(response, {
-    ok: true,
-    version: APP_VERSION,
-    driveConfigured: Boolean(DRIVE_FOLDER_ID),
-    sessionConfigured: SESSION_CONFIGURED,
-  });
-});
+app.get(
+  "/api/health",
+  asyncRoute(async (_request, response) => {
+    const settings = await getRuntimeSettings();
+    sendData(response, {
+      ok: true,
+      version: APP_VERSION,
+      driveConfigured: Boolean(settings.folderId && !settings.folderValidationError),
+      sessionConfigured: SESSION_CONFIGURED,
+      setupRequired: settings.setupRequired,
+    });
+  }),
+);
 
-app.get("/api/config", (request, response) => {
-  sendData(response, {
-    version: APP_VERSION,
-    apiReady: true,
-    driveConfigured: Boolean(DRIVE_FOLDER_ID),
-    storageMode: DRIVE_SHARED_DRIVE_ID
-      ? "Google Shared Drive + Cloud Run ADC"
-      : process.env.DRIVE_OAUTH_REFRESH_TOKEN
-        ? "Google Drive 擁有者 OAuth"
-        : "Google Drive（待確認身分模式）",
-    maxFileBytes: MAX_FILE_BYTES,
-    uploadChunkBytes: UPLOAD_CHUNK_BYTES,
-    anonymousUploads: ALLOW_ANONYMOUS_UPLOADS,
-    publicDownloads: PUBLIC_DOWNLOADS,
-    ipDisplayMode: IP_DISPLAY_MODE,
-    canManage: isAdmin(request.user),
-  });
-});
+app.get(
+  "/api/config",
+  asyncRoute(async (request, response) => {
+    const settings = await getRuntimeSettings();
+    const currentAudience = !settings.googleClientId || request.user?.clientId === settings.googleClientId;
+    response.set("Cache-Control", "no-store");
+    sendData(response, {
+      version: APP_VERSION,
+      apiReady: true,
+      driveConfigured: Boolean(settings.folderId && !settings.folderValidationError),
+      googleClientId: settings.googleClientId,
+      folderName: settings.folderName,
+      setupRequired: settings.setupRequired,
+      storageMode: DRIVE_SHARED_DRIVE_ID
+        ? "Google Shared Drive + Cloud Run ADC"
+        : process.env.DRIVE_OAUTH_REFRESH_TOKEN
+          ? "Google Drive 擁有者 OAuth"
+          : "Google Drive（待確認身分模式）",
+      maxFileBytes: MAX_FILE_BYTES,
+      uploadChunkBytes: UPLOAD_CHUNK_BYTES,
+      anonymousUploads: ALLOW_ANONYMOUS_UPLOADS,
+      publicDownloads: PUBLIC_DOWNLOADS,
+      ipDisplayMode: IP_DISPLAY_MODE,
+      canManage: Boolean(currentAudience && isAdmin(request.user)),
+    });
+  }),
+);
+
+app.get(
+  "/api/admin/settings",
+  requireAdmin,
+  asyncRoute(async (_request, response) => {
+    const settings = await getRuntimeSettings({ force: true });
+    const storageLocked = settings.folderId
+      ? await hasManagedData({ folderId: settings.folderId, driveId: settings.driveId })
+      : false;
+    response.set("Cache-Control", "no-store");
+    sendData(response, { ...publicSettingsRecord(settings), storageLocked });
+  }),
+);
+
+app.patch(
+  "/api/admin/settings",
+  requireMutationOrigin,
+  requireAdmin,
+  asyncRoute(async (request, response) => {
+    const current = await getRuntimeSettings({ force: true });
+    if (current.googleClientId && request.user.clientId !== current.googleClientId) {
+      throw httpError(401, "AUTH_AUDIENCE_CHANGED", "Google 登入設定已變更，請重新登入");
+    }
+    if (request.body?.expectedRevision !== undefined) {
+      const expectedRevision = Number(request.body.expectedRevision);
+      if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== current.revision) {
+        throw httpError(409, "CONFIG_STALE", "共用設定已由其他管理員更新，請重新載入後再試");
+      }
+    }
+    const googleClientId = validateGoogleClientId(
+      request.body?.googleClientId ?? request.body?.clientId ?? current.googleClientId,
+    );
+    const folderInput = String(
+      request.body?.folderInput ?? request.body?.folderId ?? request.body?.folderName ?? "",
+    ).trim();
+    const currentStorage = current.folderId
+      ? { folderId: current.folderId, folderName: current.folderName, driveId: current.driveId }
+      : null;
+    const storageLocked = currentStorage ? await hasManagedData(currentStorage) : false;
+    let folder;
+    let folderCreated = false;
+    if (!folderInput) {
+      if (!current.folderId) {
+        throw httpError(400, "DRIVE_FOLDER_INPUT_REQUIRED", "請輸入 Google Drive 資料夾名稱、網址或 ID");
+      }
+      folder = await inspectDriveFolder(current.folderId);
+    } else if (current.folderId && folderInput.normalize("NFC") === current.folderName) {
+      folder = await inspectDriveFolder(current.folderId);
+    } else {
+      const parsed = parseFolderInput(folderInput);
+      const pointsToCurrent =
+        Boolean(current.folderId) &&
+        ((parsed.kind === "id" && parsed.id === current.folderId) ||
+          (parsed.kind === "name" && parsed.name === current.folderName));
+      if (pointsToCurrent) {
+        folder = await inspectDriveFolder(current.folderId);
+      } else if (storageLocked) {
+        throw httpError(
+          409,
+          "STORAGE_FOLDER_LOCKED",
+          "目前資料夾已有 DriveDock 資料，不能直接切換；請先完成資料遷移",
+        );
+      } else {
+        const resolved = await resolveOrCreateFolder(folderInput);
+        folder = resolved.folder;
+        folderCreated = resolved.created;
+      }
+    }
+    if (current.folderId && folder.id !== current.folderId && storageLocked) {
+      throw httpError(409, "STORAGE_FOLDER_LOCKED", "目前資料夾已有 DriveDock 資料，不能直接切換");
+    }
+    const saved = await saveRuntimeSettings({
+      googleClientId,
+      folder,
+      current,
+      updatedBy: request.user,
+    });
+    response.set("Cache-Control", "no-store");
+    sendData(response, {
+      ...publicSettingsRecord(saved),
+      storageLocked: await hasManagedData(saved),
+      folderCreated,
+      reloadRequired: true,
+    });
+  }),
+);
 
 app.post(
   "/api/auth/google",
   ensureMutationOrigin,
   asyncRoute(async (request, response) => {
-    if (!GOOGLE_WEB_CLIENT_ID) throw httpError(503, "GOOGLE_LOGIN_NOT_CONFIGURED", "尚未設定 Google Web Client ID");
+    const settings = await getRuntimeSettings();
+    const suppliedClientId = request.body?.clientId
+      ? validateGoogleClientId(request.body.clientId)
+      : "";
+    const audience = settings.googleClientId || suppliedClientId;
+    if (!audience) throw httpError(503, "GOOGLE_LOGIN_NOT_CONFIGURED", "尚未設定 Google Web Client ID");
+    if (settings.googleClientId && suppliedClientId && suppliedClientId !== settings.googleClientId) {
+      throw httpError(401, "GOOGLE_CLIENT_ID_MISMATCH", "Google OAuth Client ID 與全站設定不符");
+    }
     const credential = String(request.body?.credential || "");
     if (!credential || credential.length > 10000) throw httpError(400, "INVALID_GOOGLE_TOKEN", "缺少 Google 登入憑證");
     let ticket;
     try {
-      ticket = await googleIdVerifier.verifyIdToken({ idToken: credential, audience: GOOGLE_WEB_CLIENT_ID });
+      const verifier = new OAuth2Client(audience);
+      ticket = await verifier.verifyIdToken({ idToken: credential, audience });
     } catch {
       throw httpError(401, "INVALID_GOOGLE_TOKEN", "Google 登入憑證無效或已過期");
     }
@@ -566,6 +1073,7 @@ app.post(
       picture: String(payload.picture || "").slice(0, 1000),
       email: String(payload.email || "").slice(0, 320),
       emailVerified: Boolean(payload.email_verified),
+      clientId: audience,
     };
     setSessionCookie(response, user);
     sendData(response, {
@@ -577,16 +1085,24 @@ app.post(
   }),
 );
 
-app.get("/api/auth/session", (request, response) => {
-  if (!request.user) return sendData(response, { authenticated: false, user: null, role: "guest", canManage: false });
-  setSessionCookie(response, request.user);
-  return sendData(response, {
-    authenticated: true,
-    user: { name: request.user.name, picture: request.user.picture },
-    role: isAdmin(request.user) ? "admin" : "user",
-    canManage: isAdmin(request.user),
-  });
-});
+app.get(
+  "/api/auth/session",
+  asyncRoute(async (request, response) => {
+    if (!request.user) return sendData(response, { authenticated: false, user: null, role: "guest", canManage: false });
+    const settings = await getRuntimeSettings();
+    if (settings.googleClientId && request.user.clientId !== settings.googleClientId) {
+      clearSessionCookie(response);
+      return sendData(response, { authenticated: false, user: null, role: "guest", canManage: false });
+    }
+    setSessionCookie(response, request.user);
+    return sendData(response, {
+      authenticated: true,
+      user: { name: request.user.name, picture: request.user.picture },
+      role: isAdmin(request.user) ? "admin" : "user",
+      canManage: isAdmin(request.user),
+    });
+  }),
+);
 
 app.post("/api/auth/logout", ensureMutationOrigin, (_request, response) => {
   clearSessionCookie(response);
@@ -596,11 +1112,13 @@ app.post("/api/auth/logout", ensureMutationOrigin, (_request, response) => {
 app.get(
   "/api/files",
   asyncRoute(async (request, response) => {
-    assertDriveConfigured();
+    const storage = await getStorageContext();
     const entity = entityForKind(String(request.query.kind || "file"));
     if (entity === "noteAttachment") throw httpError(403, "ATTACHMENT_LIST_FORBIDDEN", "附件不能公開列出");
     const drive = await getDrive();
-    const result = await drive.files.list(driveListParameters(entity, request.query.pageSize, request.query.pageToken));
+    const result = await drive.files.list(
+      driveListParameters(storage, entity, request.query.pageSize, request.query.pageToken),
+    );
     sendData(response, {
       files: (result.data.files || []).map((file) => toPublicFile(file, request)),
       nextPageToken: result.data.nextPageToken || null,
@@ -614,7 +1132,7 @@ app.post(
   uploadLimiter,
   ensureMutationOrigin,
   asyncRoute(async (request, response) => {
-    assertDriveConfigured();
+    const storage = await getStorageContext();
     if (!request.user && !ALLOW_ANONYMOUS_UPLOADS) throw httpError(401, "AUTH_REQUIRED", "此網站只允許登入使用者上傳");
     const name = safeName(request.body?.name);
     const sizeBytes = Number(request.body?.sizeBytes);
@@ -653,7 +1171,7 @@ app.post(
     const metadata = {
       id: fileId,
       name,
-      parents: [DRIVE_FOLDER_ID],
+      parents: [storage.folderId],
       mimeType,
       appProperties: properties,
     };
@@ -997,9 +1515,11 @@ async function mapInBatches(items, batchSize, mapper) {
 app.get(
   "/api/notes",
   asyncRoute(async (request, response) => {
-    assertDriveConfigured();
+    const storage = await getStorageContext();
     const drive = await getDrive();
-    const result = await drive.files.list(driveListParameters("note", request.query.pageSize, request.query.pageToken));
+    const result = await drive.files.list(
+      driveListParameters(storage, "note", request.query.pageSize, request.query.pageToken),
+    );
     const notes = await mapInBatches(result.data.files || [], 5, async (metadata) => {
       try {
         const content = await readNoteContent(drive, metadata.id);
@@ -1029,7 +1549,7 @@ app.post(
   uploadLimiter,
   ensureMutationOrigin,
   asyncRoute(async (request, response) => {
-    assertDriveConfigured();
+    const storage = await getStorageContext();
     if (!request.user && !ALLOW_ANONYMOUS_UPLOADS) throw httpError(401, "AUTH_REQUIRED", "此網站只允許登入使用者新增備註");
     const title = safeName(request.body?.title);
     const content = String(request.body?.content || "").trim().slice(0, 20000);
@@ -1050,7 +1570,7 @@ app.post(
       supportsAllDrives: true,
       requestBody: {
         name: title,
-        parents: [DRIVE_FOLDER_ID],
+        parents: [storage.folderId],
         mimeType: "application/json",
         appProperties: {
           appId: APP_ID,
@@ -1210,6 +1730,8 @@ app.use((error, request, response, _next) => {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`DriveDock API listening on ${PORT}`);
-  if (!DRIVE_FOLDER_ID) console.warn("DRIVE_FOLDER_ID is not configured; API storage routes will return 503.");
+  if (!ENV_DRIVE_FOLDER_ID) {
+    console.warn("DRIVE_FOLDER_ID is not configured; Drive settings will be loaded from .drivedock-config.json.");
+  }
   if (!SESSION_CONFIGURED) console.warn("SESSION_SIGNING_KEY is not configured; sessions will reset between instances.");
 });

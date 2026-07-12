@@ -243,8 +243,71 @@
                 <h2 id="settings-title">系統設定</h2>
                 <p>集中檢查前端、Google Drive、登入、權限、隱私與 PWA 部署資訊。</p>
               </div>
-              <span class="version-pill">v1.0.0</span>
+              <span class="version-pill">v1.1.0</span>
             </div>
+
+            <section class="google-setup-card" id="google-setup-card" aria-labelledby="google-setup-title">
+              <div class="google-setup-head">
+                <div>
+                  <span class="section-kicker">GOOGLE SIGN-IN &amp; STORAGE</span>
+                  <h2 id="google-setup-title">Google 登入模式設定</h2>
+                  <p>網站管理者設定一次後，所有檔案、相片、備註與附件都會放在同一個 Drive 資料夾。</p>
+                </div>
+                <span class="setup-state" id="google-setup-state" data-state="idle" role="status" aria-live="polite">尚未連接</span>
+              </div>
+              <form id="google-setup-form" novalidate>
+                <div class="google-setup-fields">
+                  <label for="setup-client-id">
+                    <span>Google OAuth Web Client ID <small>公開識別碼</small></span>
+                    <input
+                      id="setup-client-id"
+                      name="googleClientId"
+                      type="text"
+                      inputmode="text"
+                      autocomplete="off"
+                      spellcheck="false"
+                      maxlength="255"
+                      required
+                      aria-describedby="setup-client-id-help setup-client-id-error"
+                      placeholder="000000000000-your-id.apps.googleusercontent.com"
+                    />
+                    <small class="setup-field-help" id="setup-client-id-help">請填入您在 Google Cloud 申請的 Web Client ID；這不是 Client Secret。</small>
+                    <small class="setup-field-error" id="setup-client-id-error" role="alert" hidden></small>
+                  </label>
+                  <label for="setup-folder-input">
+                    <span>Google Drive 資料夾名稱、網址或 ID <small>全站共用</small></span>
+                    <input
+                      id="setup-folder-input"
+                      name="folderInput"
+                      type="text"
+                      autocomplete="off"
+                      spellcheck="false"
+                      maxlength="500"
+                      required
+                      disabled
+                      aria-describedby="setup-folder-help setup-folder-error"
+                      placeholder="例如：DriveDock Storage，或貼上 Drive 資料夾網址"
+                    />
+                    <small class="setup-field-help" id="setup-folder-help">輸入名稱可尋找或建立資料夾；若有同名資料夾，請改貼資料夾網址或 ID。</small>
+                    <small class="setup-field-error" id="setup-folder-error" role="alert" hidden></small>
+                  </label>
+                </div>
+                <p class="setup-admin-note" id="setup-admin-note" role="status">請先登入管理員帳戶，才能變更全站共用設定。</p>
+                <div class="google-setup-foot">
+                  <div class="setup-folder-result" id="setup-folder-summary" aria-live="polite">
+                    <span>目前共用資料夾</span>
+                    <strong id="setup-folder-result">尚未設定</strong>
+                    <small id="setup-folder-id">所有裝置會共用管理員指定的同一個資料夾。</small>
+                  </div>
+                  <div class="inline-actions setup-actions">
+                    <a class="secondary-button compact" id="open-storage-folder" href="#" target="_blank" rel="noopener" hidden>在 Google Drive 開啟</a>
+                    <button class="secondary-button" id="bootstrap-google-login" type="button" aria-describedby="setup-admin-note">套用 Client ID 並登入</button>
+                    <button class="primary-button" id="save-google-setup" type="submit" aria-describedby="setup-admin-note" disabled>儲存共用設定</button>
+                  </div>
+                </div>
+              </form>
+              <p class="setup-disclaimer">Web Client ID 與資料夾識別資訊是公開設定，不是密碼；請勿在此輸入 Client Secret、Refresh Token、Access Token 或 Service Account JSON。附圖中的 ID 僅為格式範例，每個部署者都必須使用自己申請的資料。</p>
+            </section>
 
             <section class="settings-order-panel" aria-labelledby="settings-order-title">
               <div>
@@ -265,12 +328,11 @@
                 <div class="setting-body">
                   <div class="field-grid">
                     <label>API 基礎網址<input id="setting-api-url" type="url" placeholder="https://your-api.run.app" /></label>
-                    <label>Google Web Client ID<input id="setting-client-id" type="text" placeholder="000000000000-xxx.apps.googleusercontent.com" /></label>
                   </div>
-                  <p class="helper-text">此處只會覆寫目前裝置的公開連線值；正式部署請編輯 <code>config.js</code>。任何私密金鑰都不能放在這裡。</p>
+                  <p class="helper-text">此處只覆寫目前裝置連到哪一個 Cloud Run API；Google Client ID 與共用資料夾請在上方設定卡管理。任何私密金鑰都不能放在網頁。</p>
                   <div class="inline-actions">
                     <button class="primary-button compact" id="save-local-connection" type="button">儲存並重新載入</button>
-                    <button class="ghost-button compact" id="reset-local-connection" type="button">清除本機覆寫</button>
+                    <button class="ghost-button compact" id="reset-local-connection" type="button">清除 API 覆寫</button>
                   </div>
                 </div>
               </details>
@@ -283,7 +345,7 @@
                 </summary>
                 <div class="setting-body">
                   <div class="status-list" id="drive-status-list"></div>
-                  <div class="callout warning"><strong>重要：</strong>個人雲端硬碟請用擁有者 OAuth refresh token；Service Account 建議搭配 Google Workspace Shared Drive。憑證只放 Cloud Run Secret。</div>
+                  <div class="callout warning"><strong>全站共用：</strong>只有 API 管理員能變更上方資料夾；一般使用者與匿名訪客的檔案都會寫入相同位置，且任何 Drive 憑證都只保留在伺服器端。</div>
                   <div class="maintenance-row">
                     <div>
                       <strong>未完成上傳與孤兒附件</strong>
@@ -362,14 +424,14 @@
                 <summary>
                   <span class="setting-index">07</span>
                   <span><strong>版本資訊</strong><small>發佈版本與快取識別</small></span>
-                  <span class="setting-state">v1.0.0</span>
+                  <span class="setting-state">v1.1.0</span>
                 </summary>
                 <div class="setting-body">
                   <dl class="definition-grid">
                     <div><dt>應用程式</dt><dd>雲匣 DriveDock</dd></div>
-                    <div><dt>版本</dt><dd>1.0.0</dd></div>
+                    <div><dt>版本</dt><dd>1.1.0</dd></div>
                     <div><dt>建置日期</dt><dd>2026-07-12</dd></div>
-                    <div><dt>快取版本</dt><dd>drivedock-v1</dd></div>
+                    <div><dt>快取版本</dt><dd>drivedock-v1.1</dd></div>
                   </dl>
                 </div>
               </details>

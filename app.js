@@ -78,6 +78,39 @@ function initials(name = "?") {
   return trimmed ? [...trimmed][0].toUpperCase() : "?";
 }
 
+function normalizeGoogleClientId(value = "") {
+  return String(value).trim();
+}
+
+function isValidGoogleClientId(value = "") {
+  return /^\d+-[a-z0-9_-]+\.apps\.googleusercontent\.com$/i.test(normalizeGoogleClientId(value));
+}
+
+function normalizeFolderInput(value = "") {
+  return String(value).trim().normalize("NFC");
+}
+
+function maskDriveId(value = "") {
+  const id = String(value).trim();
+  if (!id) return "";
+  if (id.length <= 10) return `${id.slice(0, 3)}•••${id.slice(-2)}`;
+  return `${id.slice(0, 6)}••••${id.slice(-4)}`;
+}
+
+function safeDriveFolderLink(value = "", folderId = "") {
+  const candidate = String(value).trim();
+  if (candidate) {
+    try {
+      const url = new URL(candidate);
+      if (url.protocol === "https:" && url.hostname.toLowerCase() === "drive.google.com") return url.href;
+    } catch {
+      // Ignore malformed server values and fall back to the verified folder ID.
+    }
+  }
+  const id = String(folderId).trim();
+  return /^[a-z0-9_-]{10,}$/i.test(id) ? `https://drive.google.com/drive/folders/${encodeURIComponent(id)}` : "";
+}
+
 function isFormTarget(target) {
   return Boolean(target?.closest?.("input, textarea, select, [contenteditable='true']"));
 }
@@ -272,6 +305,12 @@ const state = {
   viewerPhoto: null,
   installPrompt: null,
   apiConfig: null,
+  adminSettings: null,
+  googleClientId: CONFIG.GOOGLE_CLIENT_ID,
+  googleSignInClientId: "",
+  googleSetupBusy: false,
+  googleSetupDirty: false,
+  googleSetupFeedback: null,
   lastModalFocus: null,
 };
 
@@ -305,7 +344,10 @@ function applyRoute() {
   if (state.route === "files") loadFiles();
   if (state.route === "notes") loadNotes();
   if (state.route === "photos") loadPhotos();
-  if (state.route === "settings") renderSettings();
+  if (state.route === "settings") {
+    renderSettings();
+    if (state.canManage && !state.adminSettings && !state.googleSetupBusy) void loadAdminSettings();
+  }
 
   const query = location.hash.split("?")[1] || "";
   if (state.route === "files" && new URLSearchParams(query).get("upload") === "file") {
@@ -326,6 +368,7 @@ function updateOnlineStatus() {
   else if (state.apiConfig) setSyncStatus("Drive 已連線", "online");
   $("#scan-storage").disabled = !state.canManage || !online;
   $("#cleanup-storage").disabled = !state.canManage || !online;
+  renderGoogleSetup();
 }
 
 function setSyncStatus(label, status = "checking") {
@@ -377,6 +420,7 @@ function renderAccount() {
   $("#auth-setting-state").textContent = user ? (state.canManage ? "管理員" : "已登入") : "未登入";
   $("#scan-storage").disabled = !state.canManage || !navigator.onLine;
   $("#cleanup-storage").disabled = !state.canManage || !navigator.onLine;
+  renderGoogleSetup();
 }
 
 async function restoreSession() {
@@ -401,9 +445,11 @@ async function restoreSession() {
 
 async function handleGoogleCredential(response) {
   try {
+    const clientId = normalizeGoogleClientId(state.googleClientId || CONFIG.GOOGLE_CLIENT_ID);
+    if (!clientId) throw new Error("尚未設定 Google Web Client ID");
     const session = await api("/api/auth/google", {
       method: "POST",
-      body: JSON.stringify({ credential: response.credential }),
+      body: JSON.stringify({ credential: response.credential, clientId }),
     });
     state.user = session.user;
     state.canManage = session.role === "admin" || Boolean(session.canManage);
@@ -411,26 +457,35 @@ async function handleGoogleCredential(response) {
     renderAccount();
     closeAccountMenu();
     showToast(`歡迎回來，${state.user?.name || "Google 使用者"}`);
-    await Promise.all([loadFiles(true), loadPhotos(true), loadNotes(true)]);
+    await Promise.all([
+      loadFiles(true),
+      loadPhotos(true),
+      loadNotes(true),
+      state.canManage ? loadAdminSettings() : Promise.resolve(),
+    ]);
+    renderSettings();
   } catch (error) {
     showToast(`Google 登入失敗：${error.message}`, "error");
   }
 }
 
-function initializeGoogleSignIn(attempt = 0) {
-  if (DEMO_MODE || !CONFIG.GOOGLE_CLIENT_ID) return;
+function initializeGoogleSignIn(attempt = 0, force = false) {
+  const clientId = normalizeGoogleClientId(state.googleClientId || CONFIG.GOOGLE_CLIENT_ID);
+  if (DEMO_MODE || !clientId) return;
   if (!globalThis.google?.accounts?.id) {
-    if (attempt < 40) setTimeout(() => initializeGoogleSignIn(attempt + 1), 250);
+    if (attempt < 40) setTimeout(() => initializeGoogleSignIn(attempt + 1, force), 250);
     return;
   }
+  if (!force && state.googleSignInClientId === clientId) return;
   google.accounts.id.initialize({
-    client_id: CONFIG.GOOGLE_CLIENT_ID,
+    client_id: clientId,
     callback: handleGoogleCredential,
     auto_select: true,
     cancel_on_tap_outside: false,
     use_fedcm_for_prompt: true,
   });
   const host = $("#google-button-host");
+  host.replaceChildren();
   host.hidden = false;
   $("#account-menu").prepend(host);
   google.accounts.id.renderButton(host, {
@@ -441,14 +496,16 @@ function initializeGoogleSignIn(attempt = 0) {
     text: "signin_with",
     shape: "rectangular",
   });
+  state.googleSignInClientId = clientId;
   $("#google-signin").hidden = true;
   if (!state.user) google.accounts.id.prompt();
 }
 
 function requestGoogleSignIn() {
-  if (DEMO_MODE || !CONFIG.GOOGLE_CLIENT_ID) {
+  const clientId = normalizeGoogleClientId(state.googleClientId || CONFIG.GOOGLE_CLIENT_ID);
+  if (DEMO_MODE || !clientId) {
     location.hash = "#settings";
-    showToast("請先在設定頁填入 API 網址與 Google Client ID", "error");
+    showToast("請先在設定頁套用有效的 Google Web Client ID", "error");
     return;
   }
   if (!globalThis.google?.accounts?.id) {
@@ -468,8 +525,11 @@ async function signOut() {
     globalThis.google?.accounts?.id?.disableAutoSelect?.();
     state.user = null;
     state.canManage = DEMO_MODE;
+    state.adminSettings = null;
+    state.googleSetupDirty = false;
     localStorage.removeItem("drivedock_profile_hint");
     renderAccount();
+    renderSettings();
     closeAccountMenu();
     showToast("已從此裝置登出");
     await Promise.all([loadFiles(true), loadPhotos(true), loadNotes(true)]);
@@ -1722,17 +1782,183 @@ function makeStatusRow(label, value) {
   return row;
 }
 
+function normalizeAdminSettings(raw = {}) {
+  const revision = raw.revision === null || raw.revision === undefined ? null : Number(raw.revision);
+  return {
+    revision: Number.isFinite(revision) ? revision : null,
+    googleClientId: normalizeGoogleClientId(raw.googleClientId),
+    folderId: String(raw.folderId || "").trim(),
+    folderName: String(raw.folderName || "").trim(),
+    folderWebViewLink: String(raw.folderWebViewLink || "").trim(),
+    driveId: String(raw.driveId || "").trim(),
+    setupRequired: Boolean(raw.setupRequired),
+    storageLocked: Boolean(raw.storageLocked),
+  };
+}
+
+function setSetupFieldError(input, errorNode, message = "") {
+  if (!input || !errorNode) return;
+  const invalid = Boolean(message);
+  input.setAttribute("aria-invalid", String(invalid));
+  errorNode.textContent = message;
+  errorNode.hidden = !invalid;
+}
+
+function clearGoogleSetupErrors() {
+  setSetupFieldError($("#setup-client-id"), $("#setup-client-id-error"));
+  setSetupFieldError($("#setup-folder-input"), $("#setup-folder-error"));
+}
+
+function validateGoogleSetup({ requireFolder = true } = {}) {
+  clearGoogleSetupErrors();
+  const clientInput = $("#setup-client-id");
+  const folderInputNode = $("#setup-folder-input");
+  const googleClientId = normalizeGoogleClientId(clientInput.value);
+  const folderInput = normalizeFolderInput(folderInputNode.value);
+  let firstInvalid = null;
+
+  if (!isValidGoogleClientId(googleClientId)) {
+    setSetupFieldError(clientInput, $("#setup-client-id-error"), "請輸入有效的 Google Web Client ID（結尾必須是 .apps.googleusercontent.com）。");
+    firstInvalid = clientInput;
+  }
+
+  if (requireFolder) {
+    let folderError = "";
+    if (!folderInput) {
+      folderError = "請輸入資料夾名稱、Google Drive 資料夾網址或 ID。";
+    } else if (/^https?:\/\//i.test(folderInput)) {
+      try {
+        const url = new URL(folderInput);
+        const isDriveHost = url.hostname.toLowerCase() === "drive.google.com";
+        const hasFolderId = /\/folders\/[a-z0-9_-]{10,}/i.test(url.pathname) || /^[a-z0-9_-]{10,}$/i.test(url.searchParams.get("id") || "");
+        if (url.protocol !== "https:" || !isDriveHost || !hasFolderId) {
+          folderError = "請貼上有效的 HTTPS Google Drive 資料夾網址。";
+        }
+      } catch {
+        folderError = "資料夾網址格式不正確。";
+      }
+    } else if (!/^[a-z0-9_-]{20,200}$/i.test(folderInput) && /[\p{Cc}\\/]/u.test(folderInput)) {
+      folderError = "資料夾名稱不可包含斜線或控制字元。";
+    } else if (!/^[a-z0-9_-]{20,200}$/i.test(folderInput) && folderInput.length > 200) {
+      folderError = "資料夾名稱不可超過 200 個字元。";
+    }
+    if (folderError) {
+      setSetupFieldError(folderInputNode, $("#setup-folder-error"), folderError);
+      firstInvalid ||= folderInputNode;
+    }
+  }
+
+  firstInvalid?.focus();
+  return firstInvalid ? null : { googleClientId, folderInput };
+}
+
+function setGoogleSetupFeedback(stateName, label) {
+  state.googleSetupFeedback = label ? { state: stateName, label } : null;
+  const badge = $("#google-setup-state");
+  if (!badge || !label) return;
+  badge.dataset.state = stateName;
+  badge.textContent = label;
+}
+
+function clearPublishedBootstrapClientId() {
+  const current = readLocalJson("drivedock_connection", {});
+  if (!current.GOOGLE_CLIENT_ID) return;
+  const next = {};
+  if (current.API_BASE_URL) next.API_BASE_URL = String(current.API_BASE_URL).replace(/\/$/, "");
+  if (Object.keys(next).length) localStorage.setItem("drivedock_connection", JSON.stringify(next));
+  else localStorage.removeItem("drivedock_connection");
+}
+
+function renderGoogleSetup() {
+  const card = $("#google-setup-card");
+  if (!card) return;
+  const publicConfig = state.apiConfig || {};
+  const adminSettings = state.adminSettings || {};
+  const publishedClientId = normalizeGoogleClientId(publicConfig.googleClientId);
+  const clientId = normalizeGoogleClientId(adminSettings.googleClientId || publishedClientId || state.googleClientId || CONFIG.GOOGLE_CLIENT_ID);
+  const folderName = String(adminSettings.folderName || publicConfig.folderName || "").trim();
+  const folderId = String(adminSettings.folderId || "").trim();
+  const configured = Boolean(adminSettings.folderId || publicConfig.driveConfigured || (folderName && publicConfig.setupRequired === false));
+  const setupRequired = Boolean(adminSettings.setupRequired ?? publicConfig.setupRequired ?? !configured);
+  const online = navigator.onLine;
+  const canEdit = Boolean(state.canManage && !DEMO_MODE);
+  const canBootstrap = Boolean(!DEMO_MODE && !state.user && !publishedClientId);
+  const clientInput = $("#setup-client-id");
+  const folderInput = $("#setup-folder-input");
+  const saveButton = $("#save-google-setup");
+  const bootstrapButton = $("#bootstrap-google-login");
+  const adminNote = $("#setup-admin-note");
+
+  $("#google-setup-form").setAttribute("aria-busy", String(state.googleSetupBusy));
+  card.classList.toggle("is-admin", canEdit);
+  card.classList.toggle("is-readonly", !canEdit);
+  clientInput.disabled = state.googleSetupBusy || !(canEdit || canBootstrap);
+  folderInput.disabled = state.googleSetupBusy || !canEdit || Boolean(adminSettings.storageLocked);
+  saveButton.disabled = state.googleSetupBusy || !canEdit || !online;
+  bootstrapButton.hidden = !canBootstrap;
+  bootstrapButton.disabled = state.googleSetupBusy || !online;
+
+  if (!state.googleSetupDirty || clientInput.disabled) {
+    clientInput.value = clientId;
+    folderInput.value = folderName;
+  }
+
+  if (DEMO_MODE) {
+    adminNote.textContent = "目前是本機展示模式；請先在「前端連線」填入 API 網址，再進行全站設定。";
+  } else if (adminSettings.storageLocked) {
+    adminNote.textContent = "目前資料夾已有 DriveDock 資料，因此不能直接換綁；您仍可更新 Web Client ID，資料夾遷移需由伺服器端另行處理。";
+  } else if (canEdit) {
+    adminNote.textContent = "您以管理員身分編輯全站設定；儲存後，所有手機與電腦都會使用同一個 Drive 資料夾。";
+  } else if (canBootstrap) {
+    adminNote.textContent = "首次設定：先輸入公開的 Web Client ID，套用並登入管理員帳戶；登入後即可指定共用資料夾。";
+  } else if (state.user) {
+    adminNote.textContent = "目前登入帳戶不是 API 管理員，因此只能查看全站共用設定，不能變更。";
+  } else {
+    adminNote.textContent = "請先使用管理員 Google 帳戶登入；一般使用者只能查看共用資料夾狀態。";
+  }
+
+  $("#setup-folder-result").textContent = folderName || (setupRequired ? "尚未設定" : "已連接 Google Drive");
+  $("#setup-folder-id").textContent = folderId
+    ? `資料夾 ID：${maskDriveId(folderId)}`
+    : configured
+      ? "所有裝置共用此資料夾；完整 ID 僅對管理員顯示。"
+      : "名稱不存在時會建立資料夾；若有同名資料夾，請貼網址或 ID。";
+
+  const folderLink = safeDriveFolderLink(adminSettings.folderWebViewLink, folderId);
+  const openFolder = $("#open-storage-folder");
+  openFolder.hidden = !configured || !folderLink;
+  if (folderLink) openFolder.href = folderLink;
+  else openFolder.removeAttribute("href");
+
+  let badgeState = configured ? "success" : "idle";
+  let badgeLabel = configured ? "已連線" : setupRequired ? "待設定" : "尚未連接";
+  if (state.googleSetupBusy) {
+    badgeState = "checking";
+    badgeLabel = "處理中";
+  } else if (state.googleSetupFeedback) {
+    badgeState = state.googleSetupFeedback.state;
+    badgeLabel = state.googleSetupFeedback.label;
+  } else if (DEMO_MODE) {
+    badgeLabel = "展示模式";
+  }
+  const badge = $("#google-setup-state");
+  badge.dataset.state = badgeState;
+  badge.textContent = badgeLabel;
+}
+
 function renderSettings() {
   renderSettingsOrder();
   $("#setting-api-url").value = CONFIG.API_BASE_URL;
-  $("#setting-client-id").value = CONFIG.GOOGLE_CLIENT_ID;
   $("#connection-setting-state").textContent = DEMO_MODE ? "展示模式" : CONFIG.API_BASE_URL ? "已設定" : "待設定";
   const driveStatus = $("#drive-status-list");
   const config = state.apiConfig || {};
+  const adminSettings = state.adminSettings || {};
+  const folderName = adminSettings.folderName || config.folderName || "";
   driveStatus.replaceChildren(
     makeStatusRow("API 狀態", DEMO_MODE ? "本機展示資料" : config.apiReady ? "正常" : "等待連線"),
     makeStatusRow("儲存模式", config.storageMode || (DEMO_MODE ? "尚未連接 Drive" : "由伺服器決定")),
-    makeStatusRow("目標資料夾", config.driveConfigured ? "已安全設定" : "未公開或未設定"),
+    makeStatusRow("目標資料夾", folderName || (config.driveConfigured ? "已安全設定" : "尚未設定")),
+    ...(adminSettings.folderId ? [makeStatusRow("資料夾 ID", maskDriveId(adminSettings.folderId))] : []),
     makeStatusRow("分段大小", formatBytes(config.uploadChunkBytes || CONFIG.UPLOAD_CHUNK_BYTES, 0)),
   );
   $("#drive-setting-state").textContent = config.driveConfigured ? "已連線" : DEMO_MODE ? "展示模式" : "待設定";
@@ -1746,6 +1972,29 @@ function renderSettings() {
   $("#auth-setting-state").textContent = state.user ? (state.canManage ? "管理員" : "已登入") : "未登入";
   $("#scan-storage").disabled = !state.canManage || !navigator.onLine;
   $("#cleanup-storage").disabled = !state.canManage || !navigator.onLine;
+  renderGoogleSetup();
+}
+
+async function loadAdminSettings({ notify = false } = {}) {
+  if (DEMO_MODE || !state.canManage || state.googleSetupBusy) return null;
+  state.googleSetupBusy = true;
+  setGoogleSetupFeedback("checking", "讀取中");
+  renderGoogleSetup();
+  try {
+    const result = await api("/api/admin/settings");
+    state.adminSettings = normalizeAdminSettings(result);
+    if (state.adminSettings.googleClientId) state.googleClientId = state.adminSettings.googleClientId;
+    state.googleSetupDirty = false;
+    state.googleSetupFeedback = null;
+    return state.adminSettings;
+  } catch (error) {
+    setGoogleSetupFeedback("error", "讀取失敗");
+    if (notify || error.status !== 403) showToast(`無法讀取管理員設定：${error.message}`, "error");
+    return null;
+  } finally {
+    state.googleSetupBusy = false;
+    renderSettings();
+  }
 }
 
 async function scanStorageCandidates(notify = true) {
@@ -1791,6 +2040,9 @@ async function loadPublicConfig() {
     state.apiConfig = {
       apiReady: false,
       driveConfigured: false,
+      googleClientId: state.googleClientId,
+      folderName: "",
+      setupRequired: true,
       storageMode: "展示模式",
       anonymousUploads: true,
       publicDownloads: true,
@@ -1802,8 +2054,17 @@ async function loadPublicConfig() {
     return;
   }
   try {
+    const previousClientId = normalizeGoogleClientId(state.googleClientId);
     state.apiConfig = await api("/api/config");
+    const publishedClientId = normalizeGoogleClientId(state.apiConfig.googleClientId);
+    if (publishedClientId) {
+      state.googleClientId = publishedClientId;
+      clearPublishedBootstrapClientId();
+    }
     setSyncStatus(state.apiConfig.driveConfigured ? "Drive 已連線" : "API 已連線", "online");
+    if (state.googleSignInClientId && publishedClientId && publishedClientId !== previousClientId) {
+      initializeGoogleSignIn(0, true);
+    }
   } catch (error) {
     state.apiConfig = null;
     setSyncStatus("API 連線失敗", "offline");
@@ -1812,19 +2073,106 @@ async function loadPublicConfig() {
   renderSettings();
 }
 
+function bootstrapGoogleLogin() {
+  if (DEMO_MODE) {
+    showToast("請先設定 API 網址，再套用 Google Client ID", "error");
+    return;
+  }
+  const values = validateGoogleSetup({ requireFolder: false });
+  if (!values) return;
+  const current = readLocalJson("drivedock_connection", {});
+  const next = { GOOGLE_CLIENT_ID: values.googleClientId };
+  if (current.API_BASE_URL) next.API_BASE_URL = String(current.API_BASE_URL).replace(/\/$/, "");
+  localStorage.setItem("drivedock_connection", JSON.stringify(next));
+  sessionStorage.setItem("drivedock_bootstrap_notice", "已套用公開 Client ID，請使用管理員 Google 帳戶登入。" );
+  location.reload();
+}
+
+async function saveGoogleSetup(event) {
+  event?.preventDefault?.();
+  if (!state.canManage) {
+    if (!state.user && !normalizeGoogleClientId(state.apiConfig?.googleClientId) && !DEMO_MODE) {
+      bootstrapGoogleLogin();
+      return;
+    }
+    showToast("只有 API 管理員可以變更全站 Google Drive 設定", "error");
+    return;
+  }
+  if (!navigator.onLine) {
+    showToast("目前離線，無法驗證並儲存 Drive 設定", "error");
+    return;
+  }
+  const values = validateGoogleSetup();
+  if (!values) return;
+  const payload = {
+    googleClientId: values.googleClientId,
+    folderInput: values.folderInput,
+  };
+  const revision = state.adminSettings?.revision;
+  if (Number.isFinite(revision)) payload.expectedRevision = revision;
+
+  state.googleSetupBusy = true;
+  setGoogleSetupFeedback("checking", "驗證中");
+  renderGoogleSetup();
+  try {
+    const result = await api("/api/admin/settings", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+    state.adminSettings = normalizeAdminSettings(result);
+    state.googleClientId = state.adminSettings.googleClientId || values.googleClientId;
+    state.apiConfig = {
+      ...(state.apiConfig || {}),
+      googleClientId: state.googleClientId,
+      folderName: state.adminSettings.folderName,
+      driveConfigured: Boolean(state.adminSettings.folderId),
+      setupRequired: state.adminSettings.setupRequired,
+    };
+    state.googleSetupDirty = false;
+    clearGoogleSetupErrors();
+    clearPublishedBootstrapClientId();
+    setGoogleSetupFeedback("success", result.folderCreated ? "已建立並連線" : "已儲存並連線");
+    showToast(result.folderCreated ? `已建立並連接「${state.adminSettings.folderName}」` : `已連接「${state.adminSettings.folderName}」`);
+    if (result.reloadRequired) {
+      sessionStorage.setItem("drivedock_setup_notice", "Google 與 Drive 共用設定已更新。" );
+      setTimeout(() => location.reload(), 1200);
+    } else {
+      initializeGoogleSignIn(0, true);
+      await Promise.all([loadFiles(true), loadPhotos(true), loadNotes(true)]);
+    }
+  } catch (error) {
+    setGoogleSetupFeedback("error", error.status === 409 ? "設定已更新" : "驗證失敗");
+    if (error.status === 409) setTimeout(() => void loadAdminSettings(), 0);
+    showToast(`無法儲存 Google Drive 設定：${error.message}`, "error");
+  } finally {
+    state.googleSetupBusy = false;
+    renderSettings();
+  }
+}
+
 function saveLocalConnection() {
   const API_BASE_URL = $("#setting-api-url").value.trim().replace(/\/$/, "");
-  const GOOGLE_CLIENT_ID = $("#setting-client-id").value.trim();
   if (API_BASE_URL && !/^https:\/\//i.test(API_BASE_URL) && !/^http:\/\/localhost(?::\d+)?$/i.test(API_BASE_URL)) {
     showToast("正式 API 網址必須使用 HTTPS", "error");
     return;
   }
-  localStorage.setItem("drivedock_connection", JSON.stringify({ API_BASE_URL, GOOGLE_CLIENT_ID }));
+  const current = readLocalJson("drivedock_connection", {});
+  const next = {};
+  if (API_BASE_URL) next.API_BASE_URL = API_BASE_URL;
+  if (current.GOOGLE_CLIENT_ID) next.GOOGLE_CLIENT_ID = normalizeGoogleClientId(current.GOOGLE_CLIENT_ID);
+  if (Object.keys(next).length) localStorage.setItem("drivedock_connection", JSON.stringify(next));
+  else localStorage.removeItem("drivedock_connection");
   location.reload();
 }
 
 function resetLocalConnection() {
-  localStorage.removeItem("drivedock_connection");
+  const current = readLocalJson("drivedock_connection", {});
+  const bootstrapClientId = normalizeGoogleClientId(current.GOOGLE_CLIENT_ID);
+  if (bootstrapClientId) {
+    localStorage.setItem("drivedock_connection", JSON.stringify({ GOOGLE_CLIENT_ID: bootstrapClientId }));
+  } else {
+    localStorage.removeItem("drivedock_connection");
+  }
   location.reload();
 }
 
@@ -1995,6 +2343,17 @@ function initializeEvents() {
 
   $("#save-local-connection").addEventListener("click", saveLocalConnection);
   $("#reset-local-connection").addEventListener("click", resetLocalConnection);
+  $("#google-setup-form").addEventListener("submit", saveGoogleSetup);
+  $("#bootstrap-google-login").addEventListener("click", bootstrapGoogleLogin);
+  [$("#setup-client-id"), $("#setup-folder-input")].forEach((input) => {
+    input.addEventListener("input", () => {
+      state.googleSetupDirty = true;
+      setGoogleSetupFeedback("checking", "尚未儲存");
+      if (input.id === "setup-client-id") setSetupFieldError(input, $("#setup-client-id-error"));
+      else setSetupFieldError(input, $("#setup-folder-error"));
+      renderGoogleSetup();
+    });
+  });
   $("#scan-storage").addEventListener("click", () => scanStorageCandidates());
   $("#cleanup-storage").addEventListener("click", cleanupStorageCandidates);
   $$(".setting-card").forEach((details) => {
@@ -2035,7 +2394,14 @@ async function initialize() {
   renderSettings();
   applyRoute();
   await Promise.all([loadPublicConfig(), restoreSession()]);
+  if (state.canManage) await loadAdminSettings();
   initializeGoogleSignIn();
+  const setupNotice = sessionStorage.getItem("drivedock_setup_notice") || sessionStorage.getItem("drivedock_bootstrap_notice");
+  if (setupNotice) {
+    sessionStorage.removeItem("drivedock_setup_notice");
+    sessionStorage.removeItem("drivedock_bootstrap_notice");
+    showToast(setupNotice);
+  }
   if ("serviceWorker" in navigator) {
     try {
       await navigator.serviceWorker.register("./sw.js", { scope: "./" });
