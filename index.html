@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="zh-Hant" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#08111f" />
+    <meta name="color-scheme" content="dark light" />
+    <meta
+      name="description"
+      content="雲匣 DriveDock：以 Google Drive 儲存的跨裝置 PWA 檔案櫃。"
+    />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; img-src 'self' data: blob: https:; connect-src 'self' https:; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; form-action 'self'"
+    />
+    <title>雲匣 DriveDock</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon-192.png" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./config.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳到主要內容</a>
+
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主要導覽">
+        <a class="brand" href="#files" aria-label="雲匣 DriveDock 首頁">
+          <img src="./icon-192.png" alt="" width="44" height="44" />
+          <span>
+            <strong>雲匣</strong>
+            <small>DriveDock</small>
+          </span>
+        </a>
+
+        <nav class="side-nav">
+          <a href="#files" data-route-link="files" aria-current="page">
+            <span class="nav-icon" aria-hidden="true">▤</span>
+            <span>檔案</span>
+            <small>P0</small>
+          </a>
+          <a href="#notes" data-route-link="notes">
+            <span class="nav-icon" aria-hidden="true">✦</span>
+            <span>備註</span>
+            <small>P1</small>
+          </a>
+          <a href="#photos" data-route-link="photos">
+            <span class="nav-icon" aria-hidden="true">▧</span>
+            <span>相片</span>
+            <small>P2</small>
+          </a>
+          <a href="#settings" data-route-link="settings">
+            <span class="nav-icon" aria-hidden="true">⚙</span>
+            <span>設定</span>
+            <small>P3</small>
+          </a>
+        </nav>
+
+        <div class="sidebar-foot">
+          <span class="status-dot" id="connection-dot" aria-hidden="true"></span>
+          <span id="connection-label">正在連線…</span>
+        </div>
+      </aside>
+
+      <div class="app-main">
+        <header class="topbar">
+          <div class="mobile-brand">
+            <img src="./icon-192.png" alt="" width="36" height="36" />
+            <span><strong>雲匣</strong><small>DriveDock</small></span>
+          </div>
+
+          <div class="page-heading">
+            <span class="eyebrow" id="page-eyebrow">P0 · GOOGLE DRIVE</span>
+            <h1 id="page-title">檔案總覽</h1>
+          </div>
+
+          <div class="topbar-actions">
+            <span class="sync-pill" id="sync-pill">
+              <span class="status-dot" aria-hidden="true"></span>
+              <span>Drive 檢查中</span>
+            </span>
+            <button class="icon-button" id="install-button" type="button" hidden aria-label="安裝雲匣應用程式" title="安裝應用程式">↓</button>
+            <button class="icon-button" id="theme-toggle" type="button" aria-label="切換亮色模式" title="切換明暗模式">☼</button>
+            <button class="account-button" id="account-button" type="button" aria-haspopup="menu" aria-expanded="false">
+              <span class="account-avatar" id="account-avatar">?</span>
+              <span class="account-copy">
+                <strong id="account-name">Google 帳戶</strong>
+                <small id="account-status">尚未登入</small>
+              </span>
+              <span aria-hidden="true">⌄</span>
+            </button>
+            <div class="account-menu" id="account-menu" role="menu" hidden>
+              <button type="button" id="google-signin" role="menuitem">使用 Google 登入</button>
+              <button type="button" id="google-signout" role="menuitem" hidden>登出此裝置</button>
+              <a href="#settings" role="menuitem">連線設定</a>
+            </div>
+          </div>
+        </header>
+
+        <main id="main-content" tabindex="-1">
+          <section class="page is-active" id="page-files" data-route="files" aria-labelledby="files-title">
+            <div class="hero-panel">
+              <div>
+                <span class="section-kicker">安全直傳至 Google Drive</span>
+                <h2 id="files-title">把檔案放進同一個雲端入口</h2>
+                <p>支援多檔、單檔最高 500 MB。登入後顯示 Google 名稱，訪客則依管理設定顯示 IP。</p>
+                <div class="hero-actions">
+                  <button class="primary-button" type="button" data-open-upload="file"><span aria-hidden="true">＋</span> 上傳檔案</button>
+                  <button class="secondary-button" type="button" id="refresh-files"><span aria-hidden="true">↻</span> 重新整理</button>
+                </div>
+              </div>
+              <div class="drop-orbit" id="file-dropzone" tabindex="0" role="button" aria-label="拖曳檔案到此處或按 Enter 選擇檔案">
+                <div class="drop-orbit-icon" aria-hidden="true">↑</div>
+                <strong>拖曳檔案到這裡</strong>
+                <span>或點一下選擇多個檔案</span>
+                <small>每個檔案最大 500 MB</small>
+              </div>
+            </div>
+
+            <section class="content-panel" aria-labelledby="file-list-title">
+              <div class="panel-head">
+                <div>
+                  <span class="section-kicker">DRIVE INDEX</span>
+                  <h2 id="file-list-title">檔案列表 <span class="count-badge" id="file-count">0</span></h2>
+                </div>
+                <div class="panel-actions">
+                  <label class="search-field">
+                    <span class="sr-only">搜尋檔案</span>
+                    <span aria-hidden="true">⌕</span>
+                    <input id="file-search" type="search" placeholder="搜尋檔名或上傳者" autocomplete="off" />
+                  </label>
+                  <button class="danger-button" id="delete-files" type="button" disabled>刪除已選 <span id="selected-file-count">0</span></button>
+                </div>
+              </div>
+
+              <div class="permission-note" id="file-permission-note">
+                <span aria-hidden="true">◇</span>
+                <span>只有 API 管理員或 Drive 擁有者可以重新命名與刪除。</span>
+              </div>
+
+              <div class="table-wrap">
+                <table class="data-table" id="file-table">
+                  <caption class="sr-only">Google Drive 檔案列表；點欄名排序，拖曳欄名調整順序。</caption>
+                  <thead id="file-table-head"></thead>
+                  <tbody id="file-table-body"></tbody>
+                </table>
+                <div class="empty-state" id="file-empty" hidden>
+                  <span class="empty-icon" aria-hidden="true">↥</span>
+                  <h3>這裡還沒有檔案</h3>
+                  <p>上傳第一個檔案，或調整搜尋條件。</p>
+                  <button class="primary-button" type="button" data-open-upload="file">上傳檔案</button>
+                </div>
+              </div>
+            </section>
+          </section>
+
+          <section class="page" id="page-notes" data-route="notes" aria-labelledby="notes-title">
+            <div class="page-intro">
+              <div>
+                <span class="section-kicker">P1 · SHARED NOTES</span>
+                <h2 id="notes-title">團隊備註板</h2>
+                <p>像便利貼一樣留下標題、內容與附件，讓所有人快速接手。</p>
+              </div>
+              <button class="primary-button" id="add-note" type="button"><span aria-hidden="true">＋</span> 新增備註</button>
+            </div>
+
+            <div class="note-summary" aria-label="備註統計">
+              <div><span>備註總數</span><strong id="note-count">0</strong></div>
+              <div><span>本週新增</span><strong id="note-week-count">0</strong></div>
+              <div><span>含附件</span><strong id="note-attachment-count">0</strong></div>
+            </div>
+
+            <section class="content-panel" aria-labelledby="note-table-title">
+              <div class="panel-head">
+                <div>
+                  <span class="section-kicker">STICK INDEX</span>
+                  <h2 id="note-table-title">所有備註</h2>
+                </div>
+                <button class="secondary-button" id="refresh-notes" type="button">↻ 重新整理</button>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table note-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">編輯</th>
+                      <th scope="col">標題名稱</th>
+                      <th scope="col">上傳者</th>
+                      <th scope="col">上傳時間</th>
+                      <th scope="col">附件檔案</th>
+                    </tr>
+                  </thead>
+                  <tbody id="note-table-body"></tbody>
+                </table>
+                <div class="empty-state" id="note-empty" hidden>
+                  <span class="empty-icon" aria-hidden="true">✦</span>
+                  <h3>還沒有共享備註</h3>
+                  <p>新增一則備註，讓下一位使用者知道最新進度。</p>
+                </div>
+              </div>
+            </section>
+          </section>
+
+          <section class="page" id="page-photos" data-route="photos" aria-labelledby="photos-title">
+            <div class="page-intro photo-intro">
+              <div>
+                <span class="section-kicker">P2 · VISUAL LIBRARY</span>
+                <h2 id="photos-title">相片圖庫</h2>
+                <p>批次上傳、縮圖瀏覽；電腦可用 Ctrl+V 貼上圖片，開啟後用 Ctrl+C 複製。</p>
+              </div>
+              <div class="hero-actions">
+                <button class="secondary-button" id="refresh-photos" type="button">↻ 重新整理</button>
+                <button class="primary-button" type="button" data-open-upload="photo"><span aria-hidden="true">＋</span> 上傳圖片</button>
+              </div>
+            </div>
+
+            <div class="photo-toolbar">
+              <div class="filter-tabs" role="group" aria-label="相片篩選">
+                <button class="is-active" type="button" data-photo-filter="all">全部</button>
+                <button type="button" data-photo-filter="today">今天</button>
+                <button type="button" data-photo-filter="week">本週</button>
+              </div>
+              <div class="panel-actions">
+                <span class="paste-hint"><kbd>Ctrl</kbd> + <kbd>V</kbd> 貼上圖片</span>
+                <button class="danger-button" id="delete-photos" type="button" disabled>刪除已選 <span id="selected-photo-count">0</span></button>
+              </div>
+            </div>
+
+            <div class="photo-grid" id="photo-grid" aria-live="polite"></div>
+            <div class="empty-state photo-empty" id="photo-empty" hidden>
+              <span class="empty-icon" aria-hidden="true">▧</span>
+              <h3>圖庫還是空的</h3>
+              <p>拖入圖片、按上傳，或在電腦直接按 Ctrl+V。</p>
+              <button class="primary-button" type="button" data-open-upload="photo">上傳圖片</button>
+            </div>
+          </section>
+
+          <section class="page" id="page-settings" data-route="settings" aria-labelledby="settings-title">
+            <div class="page-intro">
+              <div>
+                <span class="section-kicker">P3 · CONTROL CENTER</span>
+                <h2 id="settings-title">系統設定</h2>
+                <p>集中檢查前端、Google Drive、登入、權限、隱私與 PWA 部署資訊。</p>
+              </div>
+              <span class="version-pill">v1.0.0</span>
+            </div>
+
+            <section class="settings-order-panel" aria-labelledby="settings-order-title">
+              <div>
+                <span class="section-kicker">SECTION ORDER</span>
+                <h2 id="settings-order-title">調整區塊順序</h2>
+                <p>拖曳或使用方向按鈕；順序只儲存在這台裝置。</p>
+              </div>
+              <div class="order-chips" id="settings-order"></div>
+            </section>
+
+            <div class="settings-stack" id="settings-stack">
+              <details class="setting-card" data-setting-id="connection" open>
+                <summary>
+                  <span class="setting-index">01</span>
+                  <span><strong>前端連線</strong><small>GitHub Pages 與 Cloud Run 網址</small></span>
+                  <span class="setting-state" id="connection-setting-state">待設定</span>
+                </summary>
+                <div class="setting-body">
+                  <div class="field-grid">
+                    <label>API 基礎網址<input id="setting-api-url" type="url" placeholder="https://your-api.run.app" /></label>
+                    <label>Google Web Client ID<input id="setting-client-id" type="text" placeholder="000000000000-xxx.apps.googleusercontent.com" /></label>
+                  </div>
+                  <p class="helper-text">此處只會覆寫目前裝置的公開連線值；正式部署請編輯 <code>config.js</code>。任何私密金鑰都不能放在這裡。</p>
+                  <div class="inline-actions">
+                    <button class="primary-button compact" id="save-local-connection" type="button">儲存並重新載入</button>
+                    <button class="ghost-button compact" id="reset-local-connection" type="button">清除本機覆寫</button>
+                  </div>
+                </div>
+              </details>
+
+              <details class="setting-card" data-setting-id="drive">
+                <summary>
+                  <span class="setting-index">02</span>
+                  <span><strong>Google Drive API</strong><small>資料夾、憑證與共享方式</small></span>
+                  <span class="setting-state" id="drive-setting-state">檢查中</span>
+                </summary>
+                <div class="setting-body">
+                  <div class="status-list" id="drive-status-list"></div>
+                  <div class="callout warning"><strong>重要：</strong>個人雲端硬碟請用擁有者 OAuth refresh token；Service Account 建議搭配 Google Workspace Shared Drive。憑證只放 Cloud Run Secret。</div>
+                  <div class="maintenance-row">
+                    <div>
+                      <strong>未完成上傳與孤兒附件</strong>
+                      <span id="storage-cleanup-result">管理員可檢查並清理 7 天前未完成的 Drive 資料。</span>
+                    </div>
+                    <div class="inline-actions">
+                      <button class="secondary-button compact" id="scan-storage" type="button">檢查</button>
+                      <button class="danger-button compact" id="cleanup-storage" type="button">清理 7 天前資料</button>
+                    </div>
+                  </div>
+                </div>
+              </details>
+
+              <details class="setting-card" data-setting-id="upload">
+                <summary>
+                  <span class="setting-index">03</span>
+                  <span><strong>上傳規則</strong><small>容量、類型與可續傳設定</small></span>
+                  <span class="setting-state success">500 MB</span>
+                </summary>
+                <div class="setting-body">
+                  <dl class="definition-grid">
+                    <div><dt>單檔上限</dt><dd>500 MB</dd></div>
+                    <div><dt>批次檔數</dt><dd>20 個 / 次</dd></div>
+                    <div><dt>傳輸方式</dt><dd>8 MB 分段可續傳</dd></div>
+                    <div><dt>離線上傳</dt><dd>不支援，恢復連線後重試</dd></div>
+                  </dl>
+                </div>
+              </details>
+
+              <details class="setting-card" data-setting-id="auth">
+                <summary>
+                  <span class="setting-index">04</span>
+                  <span><strong>Google 帳戶登入</strong><small>GIS 自動恢復與管理員名單</small></span>
+                  <span class="setting-state" id="auth-setting-state">未連線</span>
+                </summary>
+                <div class="setting-body">
+                  <p>使用 Google Identity Services 的自動選擇功能；重新開啟網站時，如果瀏覽器仍保有 Google 工作階段，系統會取得新的短效登入憑證，不會在裝置永久保存 ID token。</p>
+                  <div class="status-list">
+                    <div><span>刪除權限</span><strong>ADMIN_EMAILS 允許名單</strong></div>
+                    <div><span>身分驗證</span><strong>後端驗證 Google ID token</strong></div>
+                  </div>
+                </div>
+              </details>
+
+              <details class="setting-card" data-setting-id="privacy">
+                <summary>
+                  <span class="setting-index">05</span>
+                  <span><strong>權限與隱私</strong><small>公開上傳、IP 顯示與刪除規則</small></span>
+                  <span class="setting-state">伺服器控管</span>
+                </summary>
+                <div class="setting-body">
+                  <div class="status-list" id="privacy-status-list"></div>
+                  <p class="helper-text">訪客 IP 屬於個人資料。預設只回傳遮罩後地址；若所在地法規要求，請加入告知與同意機制。</p>
+                </div>
+              </details>
+
+              <details class="setting-card" data-setting-id="appearance">
+                <summary>
+                  <span class="setting-index">06</span>
+                  <span><strong>介面與 PWA</strong><small>主題、安裝與跨裝置支援</small></span>
+                  <span class="setting-state success">可安裝</span>
+                </summary>
+                <div class="setting-body">
+                  <div class="preference-row">
+                    <div><strong>預設深色模式</strong><span>可在頁首切換；選擇保留於本機。</span></div>
+                    <button class="secondary-button compact" id="setting-theme-toggle" type="button">切換主題</button>
+                  </div>
+                  <div class="preference-row">
+                    <div><strong>安裝到主畫面</strong><span>支援 iOS、Android 與桌面瀏覽器。</span></div>
+                    <button class="secondary-button compact" id="setting-install" type="button">安裝應用程式</button>
+                  </div>
+                </div>
+              </details>
+
+              <details class="setting-card" data-setting-id="version">
+                <summary>
+                  <span class="setting-index">07</span>
+                  <span><strong>版本資訊</strong><small>發佈版本與快取識別</small></span>
+                  <span class="setting-state">v1.0.0</span>
+                </summary>
+                <div class="setting-body">
+                  <dl class="definition-grid">
+                    <div><dt>應用程式</dt><dd>雲匣 DriveDock</dd></div>
+                    <div><dt>版本</dt><dd>1.0.0</dd></div>
+                    <div><dt>建置日期</dt><dd>2026-07-12</dd></div>
+                    <div><dt>快取版本</dt><dd>drivedock-v1</dd></div>
+                  </dl>
+                </div>
+              </details>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <nav class="bottom-nav" aria-label="手機導覽">
+      <a href="#files" data-route-link="files" aria-current="page"><span aria-hidden="true">▤</span><small>檔案</small></a>
+      <a href="#notes" data-route-link="notes"><span aria-hidden="true">✦</span><small>備註</small></a>
+      <a href="#photos" data-route-link="photos"><span aria-hidden="true">▧</span><small>相片</small></a>
+      <a href="#settings" data-route-link="settings"><span aria-hidden="true">⚙</span><small>設定</small></a>
+    </nav>
+
+    <div class="modal-backdrop" id="upload-modal" hidden>
+      <section class="modal upload-modal" role="dialog" aria-modal="true" aria-labelledby="upload-modal-title">
+        <header class="modal-head">
+          <div>
+            <span class="section-kicker" id="upload-modal-kicker">MULTI UPLOAD</span>
+            <h2 id="upload-modal-title">上傳檔案</h2>
+          </div>
+          <button class="icon-button modal-close" type="button" data-close-modal aria-label="關閉上傳視窗">×</button>
+        </header>
+        <div class="modal-body">
+          <label class="upload-picker" id="upload-picker">
+            <input id="upload-input" type="file" multiple />
+            <span class="upload-picker-icon" aria-hidden="true">↑</span>
+            <strong>拖曳到這裡，或選擇檔案</strong>
+            <span id="upload-picker-help">可一次選擇多個檔案 · 單檔 500 MB</span>
+          </label>
+
+          <div class="queue-section">
+            <div class="queue-head">
+              <h3>待上傳清單 <span class="count-badge" id="queue-count">0</span></h3>
+              <button class="ghost-button compact" id="clear-queue" type="button">全部移除</button>
+            </div>
+            <div class="queue-table-wrap">
+              <table class="data-table compact-table">
+                <thead><tr><th>檔案名稱</th><th>檔案大小</th><th>副檔名</th><th><span class="sr-only">移除</span></th></tr></thead>
+                <tbody id="upload-queue-body"></tbody>
+              </table>
+              <div class="queue-placeholder" id="queue-placeholder">尚未選擇檔案</div>
+            </div>
+          </div>
+
+          <section class="progress-section" id="progress-section" hidden aria-live="polite">
+            <div class="progress-summary">
+              <div>
+                <span id="progress-label">準備上傳</span>
+                <strong id="progress-percent">0%</strong>
+              </div>
+              <div class="speed-readout"><span class="status-dot"></span><strong id="upload-speed">0.0 MB/s</strong></div>
+            </div>
+            <div class="progress-track"><span id="overall-progress"></span></div>
+            <div class="progress-list" id="progress-list"></div>
+          </section>
+        </div>
+        <footer class="modal-foot">
+          <span class="modal-note" id="upload-modal-note">檔案只會送到已設定的 Google Drive 資料夾。</span>
+          <div>
+            <button class="secondary-button" type="button" data-close-modal>取消</button>
+            <button class="primary-button" id="start-upload" type="button" disabled>開始上傳</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="note-modal" hidden>
+      <section class="modal note-modal" role="dialog" aria-modal="true" aria-labelledby="note-modal-title">
+        <header class="modal-head">
+          <div>
+            <span class="section-kicker">SHARED STICK</span>
+            <h2 id="note-modal-title">新增備註</h2>
+          </div>
+          <button class="icon-button modal-close" type="button" data-close-modal aria-label="關閉備註視窗">×</button>
+        </header>
+        <form id="note-form">
+          <div class="modal-body form-stack">
+            <input id="note-id" type="hidden" />
+            <label>標題 <span aria-hidden="true">*</span><input id="note-title-input" type="text" maxlength="100" required placeholder="例如：七月素材交付" /></label>
+            <label>內容 <span aria-hidden="true">*</span><textarea id="note-content-input" rows="7" maxlength="5000" required placeholder="輸入要讓其他使用者知道的內容…"></textarea></label>
+            <label class="attachment-picker">
+              <input id="note-attachment-input" type="file" multiple />
+              <span aria-hidden="true">＋</span>
+              <span><strong>加入附件</strong><small>可多選，每個檔案最大 500 MB</small></span>
+            </label>
+            <div class="attachment-list" id="note-attachment-list"></div>
+            <div class="form-progress" id="note-form-progress" hidden>
+              <div class="progress-track"><span></span></div>
+              <small>附件上傳中…</small>
+            </div>
+          </div>
+          <footer class="modal-foot">
+            <span class="modal-note">備註會以 JSON 資料儲存在同一個 Drive 資料夾。</span>
+            <div>
+              <button class="secondary-button" type="button" data-close-modal>取消</button>
+              <button class="primary-button" type="submit">儲存備註</button>
+            </div>
+          </footer>
+        </form>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="rename-modal" hidden>
+      <section class="modal small-modal" role="dialog" aria-modal="true" aria-labelledby="rename-modal-title">
+        <header class="modal-head">
+          <div><span class="section-kicker">RENAME</span><h2 id="rename-modal-title">修改檔案名稱</h2></div>
+          <button class="icon-button modal-close" type="button" data-close-modal aria-label="關閉重新命名視窗">×</button>
+        </header>
+        <form id="rename-form">
+          <div class="modal-body form-stack">
+            <input id="rename-file-id" type="hidden" />
+            <label>新檔案名稱<input id="rename-file-name" type="text" maxlength="240" required /></label>
+            <p class="helper-text">建議保留副檔名，避免其他人下載後無法辨識檔案類型。</p>
+          </div>
+          <footer class="modal-foot">
+            <span></span>
+            <div><button class="secondary-button" type="button" data-close-modal>取消</button><button class="primary-button" type="submit">儲存名稱</button></div>
+          </footer>
+        </form>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="photo-viewer" hidden>
+      <section class="photo-viewer" role="dialog" aria-modal="true" aria-labelledby="photo-viewer-title">
+        <header>
+          <div><strong id="photo-viewer-title">圖片預覽</strong><small id="photo-viewer-meta"></small></div>
+          <div>
+            <span class="paste-hint"><kbd>Ctrl</kbd> + <kbd>C</kbd> 複製圖片</span>
+            <button class="secondary-button compact" id="copy-photo" type="button">複製圖片</button>
+            <button class="icon-button" type="button" data-close-modal aria-label="關閉圖片預覽">×</button>
+          </div>
+        </header>
+        <div class="photo-viewer-stage"><img id="photo-viewer-image" alt="" /></div>
+      </section>
+    </div>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <div id="google-button-host" hidden></div>
+  </body>
+</html>
