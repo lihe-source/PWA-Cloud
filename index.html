@@ -77,6 +77,7 @@
           </div>
 
           <div class="topbar-actions">
+            <span class="top-version-badge" id="top-version-badge" aria-label="目前應用程式版本" title="目前應用程式版本"><span class="top-version-label">目前</span><strong id="top-version-value">V1.2.0</strong></span>
             <span class="sync-pill" id="sync-pill">
               <span class="status-dot" aria-hidden="true"></span>
               <span>Drive 檢查中</span>
@@ -118,6 +119,24 @@
                 <small>每個檔案最大 500 MB</small>
               </div>
             </div>
+
+            <section class="workspace-summary" aria-label="檔案摘要">
+              <article>
+                <span>目前顯示</span>
+                <strong id="file-summary-count">0</strong>
+                <small>符合搜尋條件的檔案</small>
+              </article>
+              <article>
+                <span>顯示容量</span>
+                <strong id="file-summary-size">0 MB</strong>
+                <small>目前清單合計大小</small>
+              </article>
+              <article>
+                <span>最近上傳</span>
+                <strong id="file-summary-latest">—</strong>
+                <small id="file-summary-latest-name">尚無檔案</small>
+              </article>
+            </section>
 
             <section class="content-panel" aria-labelledby="file-list-title">
               <div class="panel-head">
@@ -243,8 +262,31 @@
                 <h2 id="settings-title">系統設定</h2>
                 <p>集中檢查前端、Google Drive、登入、權限、隱私與 PWA 部署資訊。</p>
               </div>
-              <span class="version-pill">v1.1.0</span>
+              <span class="version-pill" id="settings-version-pill">V1.2.0</span>
             </div>
+
+            <section class="settings-overview" aria-label="系統狀態摘要">
+              <button type="button" class="settings-overview-card" data-setting-target="connection">
+                <span>前端連線</span>
+                <strong id="overview-connection">檢查中</strong>
+                <small>GitHub Pages 與 API</small>
+              </button>
+              <button type="button" class="settings-overview-card" data-setting-target="drive">
+                <span>Google Drive</span>
+                <strong id="overview-drive">檢查中</strong>
+                <small>共用資料夾狀態</small>
+              </button>
+              <button type="button" class="settings-overview-card" data-setting-target="auth">
+                <span>登入狀態</span>
+                <strong id="overview-auth">未登入</strong>
+                <small>Google 帳戶與權限</small>
+              </button>
+              <button type="button" class="settings-overview-card is-version" data-setting-target="version">
+                <span>應用程式版本</span>
+                <strong id="overview-version">V1.2.0</strong>
+                <small id="overview-update-state">自動檢查更新</small>
+              </button>
+            </section>
 
             <section class="google-setup-card" id="google-setup-card" aria-labelledby="google-setup-title">
               <div class="google-setup-head">
@@ -319,7 +361,7 @@
             </section>
 
             <div class="settings-stack" id="settings-stack">
-              <details class="setting-card" data-setting-id="connection" open>
+              <details class="setting-card" id="settings-connection" data-setting-id="connection" open>
                 <summary>
                   <span class="setting-index">01</span>
                   <span><strong>前端連線</strong><small>GitHub Pages 與 Cloud Run 網址</small></span>
@@ -337,7 +379,7 @@
                 </div>
               </details>
 
-              <details class="setting-card" data-setting-id="drive">
+              <details class="setting-card" id="settings-drive" data-setting-id="drive">
                 <summary>
                   <span class="setting-index">02</span>
                   <span><strong>Google Drive API</strong><small>資料夾、憑證與共享方式</small></span>
@@ -375,7 +417,7 @@
                 </div>
               </details>
 
-              <details class="setting-card" data-setting-id="auth">
+              <details class="setting-card" id="settings-auth" data-setting-id="auth">
                 <summary>
                   <span class="setting-index">04</span>
                   <span><strong>Google 帳戶登入</strong><small>GIS 自動恢復與管理員名單</small></span>
@@ -420,19 +462,38 @@
                 </div>
               </details>
 
-              <details class="setting-card" data-setting-id="version">
+              <details class="setting-card" id="settings-version" data-setting-id="version" open>
                 <summary>
                   <span class="setting-index">07</span>
-                  <span><strong>版本資訊</strong><small>發佈版本與快取識別</small></span>
-                  <span class="setting-state">v1.1.0</span>
+                  <span><strong>版本檢查與更新</strong><small>啟動時自動檢查，也可手動立即更新</small></span>
+                  <span class="setting-state" id="version-setting-state">檢查中</span>
                 </summary>
-                <div class="setting-body">
-                  <dl class="definition-grid">
+                <div class="setting-body version-control">
+                  <dl class="definition-grid version-definition-grid">
                     <div><dt>應用程式</dt><dd>雲匣 DriveDock</dd></div>
-                    <div><dt>版本</dt><dd>1.1.0</dd></div>
-                    <div><dt>建置日期</dt><dd>2026-07-12</dd></div>
-                    <div><dt>快取版本</dt><dd>drivedock-v1.1</dd></div>
+                    <div><dt>目前版本</dt><dd id="current-version-value">V1.2.0</dd></div>
+                    <div><dt>最新版本</dt><dd id="latest-version-value">檢查中</dd></div>
+                    <div><dt>最新建置日期</dt><dd id="build-date-value">2026-07-12</dd></div>
+                    <div><dt>最新快取版本</dt><dd id="cache-version-value">drivedock-v1.2.0</dd></div>
+                    <div><dt>上次檢查</dt><dd id="last-update-check">尚未檢查</dd></div>
                   </dl>
+                  <div class="update-status-panel" id="update-status-panel" data-state="checking" role="status" aria-live="polite">
+                    <span class="update-status-icon" aria-hidden="true">↻</span>
+                    <div>
+                      <strong id="update-status-title">正在檢查版本</strong>
+                      <small id="update-status-message">系統啟動時會自動向版本檔確認是否有新版本。</small>
+                    </div>
+                  </div>
+                  <div class="version-actions">
+                    <label class="auto-update-option" for="auto-update-toggle">
+                      <input id="auto-update-toggle" type="checkbox" checked />
+                      <span><strong>自動套用更新</strong><small>發現新版本時更新快取並重新載入。</small></span>
+                    </label>
+                    <div class="inline-actions">
+                      <button class="secondary-button" id="check-update" type="button">檢查更新</button>
+                      <button class="primary-button" id="apply-update" type="button" hidden>立即更新</button>
+                    </div>
+                  </div>
                 </div>
               </details>
             </div>

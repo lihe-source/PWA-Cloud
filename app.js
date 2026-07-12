@@ -19,6 +19,10 @@ const CONFIG = Object.freeze({
 });
 const DEMO_MODE = !CONFIG.API_BASE_URL && CONFIG.DEMO_MODE_WHEN_UNCONFIGURED !== false;
 const APP_ID = "drivedock";
+const APP_VERSION = String(CONFIG.VERSION || "1.2.0");
+const APP_BUILD_DATE = String(CONFIG.BUILD_DATE || "2026-07-12");
+const APP_CACHE_NAME = String(CONFIG.CACHE_NAME || `drivedock-v${APP_VERSION}`);
+const VERSION_MANIFEST_URL = "./version.json";
 const PHOTO_MIME_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -63,6 +67,42 @@ function formatDate(value, withTime = true) {
     month: "2-digit",
     day: "2-digit",
     ...(withTime ? { hour: "2-digit", minute: "2-digit", hour12: false } : {}),
+  }).format(date);
+}
+
+function normalizeVersion(value = "0.0.0") {
+  return String(value)
+    .trim()
+    .replace(/^v/i, "")
+    .split(".")
+    .slice(0, 3)
+    .map((part) => Number.parseInt(part, 10) || 0);
+}
+
+function compareVersions(left, right) {
+  const a = normalizeVersion(left);
+  const b = normalizeVersion(right);
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] > b[index]) return 1;
+    if (a[index] < b[index]) return -1;
+  }
+  return 0;
+}
+
+function formatVersion(value = APP_VERSION) {
+  return `V${String(value).replace(/^v/i, "")}`;
+}
+
+function formatCheckTime(value) {
+  if (!value) return "尚未檢查";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "尚未檢查";
+  return new Intl.DateTimeFormat("zh-TW", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
   }).format(date);
 }
 
@@ -312,6 +352,19 @@ const state = {
   googleSetupDirty: false,
   googleSetupFeedback: null,
   lastModalFocus: null,
+  version: {
+    current: APP_VERSION,
+    latest: APP_VERSION,
+    buildDate: APP_BUILD_DATE,
+    cacheName: APP_CACHE_NAME,
+    lastChecked: readLocalJson("drivedock_last_update_check", null),
+    checking: false,
+    updating: false,
+    updateAvailable: false,
+    error: "",
+    releaseNotes: [],
+    autoUpdate: readLocalJson("drivedock_auto_update", true) !== false,
+  },
 };
 
 if (state.columnOrder.length !== DEFAULT_COLUMN_ORDER.length) {
@@ -324,6 +377,185 @@ const ROUTES = {
   photos: { title: "相片圖庫", eyebrow: "P2 · VISUAL LIBRARY" },
   settings: { title: "系統設定", eyebrow: "P3 · CONTROL CENTER" },
 };
+
+function renderVersionInfo() {
+  const version = state.version;
+  const currentLabel = formatVersion(version.current);
+  const latestLabel = version.latest ? formatVersion(version.latest) : "尚未取得";
+  const topValue = $("#top-version-value");
+  if (topValue) topValue.textContent = currentLabel;
+  if ($("#settings-version-pill")) $("#settings-version-pill").textContent = currentLabel;
+  if ($("#overview-version")) $("#overview-version").textContent = currentLabel;
+  if ($("#current-version-value")) $("#current-version-value").textContent = currentLabel;
+  if ($("#latest-version-value")) $("#latest-version-value").textContent = version.checking ? "檢查中" : latestLabel;
+  if ($("#build-date-value")) $("#build-date-value").textContent = version.buildDate || APP_BUILD_DATE;
+  if ($("#cache-version-value")) $("#cache-version-value").textContent = version.cacheName || APP_CACHE_NAME;
+  if ($("#last-update-check")) $("#last-update-check").textContent = formatCheckTime(version.lastChecked);
+  if ($("#auto-update-toggle")) $("#auto-update-toggle").checked = version.autoUpdate;
+
+  const status = $("#update-status-panel");
+  const stateBadge = $("#version-setting-state");
+  const overviewState = $("#overview-update-state");
+  const updateButton = $("#apply-update");
+  const checkButton = $("#check-update");
+  if (!status || !stateBadge || !overviewState || !updateButton || !checkButton) return;
+
+  let statusState = "current";
+  let title = "已是最新版本";
+  let message = `目前使用 ${currentLabel}，系統會在啟動時自動檢查更新。`;
+  let icon = "✓";
+  let badge = "最新版";
+
+  if (version.updating) {
+    statusState = "updating";
+    title = "正在套用更新";
+    message = "正在更新離線快取與程式檔案，完成後會自動重新載入。";
+    icon = "↻";
+    badge = "更新中";
+  } else if (version.checking) {
+    statusState = "checking";
+    title = "正在檢查版本";
+    message = "正在讀取最新版本資訊。";
+    icon = "↻";
+    badge = "檢查中";
+  } else if (version.error) {
+    statusState = "error";
+    title = "暫時無法檢查更新";
+    message = version.error;
+    icon = "!";
+    badge = "檢查失敗";
+  } else if (version.updateAvailable) {
+    statusState = "available";
+    title = `發現新版本 ${latestLabel}`;
+    message = version.releaseNotes[0] || "可立即更新至最新版本。";
+    icon = "↑";
+    badge = "可更新";
+  }
+
+  status.dataset.state = statusState;
+  $("#update-status-title").textContent = title;
+  $("#update-status-message").textContent = message;
+  $(".update-status-icon", status).textContent = icon;
+  stateBadge.textContent = badge;
+  overviewState.textContent = version.updating
+    ? "正在更新"
+    : version.updateAvailable
+      ? `可更新至 ${latestLabel}`
+      : version.error
+        ? "更新檢查失敗"
+        : version.checking
+          ? "正在檢查"
+          : "已是最新版本";
+  updateButton.hidden = !version.updateAvailable;
+  updateButton.disabled = version.updating || version.checking || !navigator.onLine;
+  checkButton.disabled = version.updating || version.checking || !navigator.onLine;
+}
+
+async function checkForAppUpdate({ manual = false, autoApply = true } = {}) {
+  if (!navigator.onLine) {
+    state.version.checking = false;
+    state.version.error = "目前沒有網路連線，恢復連線後再檢查。";
+    renderVersionInfo();
+    if (manual) showToast("目前離線，無法檢查更新", "error");
+    return false;
+  }
+
+  state.version.checking = true;
+  state.version.error = "";
+  renderVersionInfo();
+  try {
+    const url = new URL(VERSION_MANIFEST_URL, location.href);
+    url.searchParams.set("_", String(Date.now()));
+    const response = await fetch(url, { cache: "no-store", headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`版本伺服器回應 ${response.status}`);
+    const manifest = await response.json();
+    const latest = String(manifest.version || "").trim();
+    if (!latest) throw new Error("版本檔缺少 version 欄位");
+
+    state.version.latest = latest;
+    state.version.buildDate = String(manifest.buildDate || state.version.buildDate || APP_BUILD_DATE);
+    state.version.cacheName = String(manifest.cacheName || `drivedock-v${latest}`);
+    state.version.releaseNotes = Array.isArray(manifest.releaseNotes) ? manifest.releaseNotes.filter(Boolean).slice(0, 5) : [];
+    state.version.updateAvailable = compareVersions(latest, APP_VERSION) > 0;
+    state.version.lastChecked = new Date().toISOString();
+    state.version.error = "";
+    localStorage.setItem("drivedock_last_update_check", JSON.stringify(state.version.lastChecked));
+    renderVersionInfo();
+
+    if (state.version.updateAvailable) {
+      if (manual) showToast(`發現新版本 ${formatVersion(latest)}`);
+      if (autoApply && state.version.autoUpdate) await applyAppUpdate({ automatic: true });
+      return true;
+    }
+    if (manual) showToast(`目前已是最新版本 ${formatVersion(APP_VERSION)}`);
+    return false;
+  } catch (error) {
+    state.version.error = `請確認 version.json 與網路狀態。${error?.message ? `（${error.message}）` : ""}`;
+    if (manual) showToast("版本檢查失敗", "error");
+    return false;
+  } finally {
+    state.version.checking = false;
+    renderVersionInfo();
+  }
+}
+
+async function waitForWorkerActivation(worker, timeoutMs = 4000) {
+  if (!worker || worker.state === "activated") return;
+  await Promise.race([
+    new Promise((resolve) => {
+      worker.addEventListener("statechange", () => {
+        if (worker.state === "activated") resolve();
+      });
+    }),
+    wait(timeoutMs),
+  ]);
+}
+
+async function applyAppUpdate({ automatic = false } = {}) {
+  if (state.version.updating) return;
+  state.version.updating = true;
+  state.version.error = "";
+  renderVersionInfo();
+  try {
+    sessionStorage.setItem("drivedock_update_notice", `已更新至 ${formatVersion(state.version.latest)}`);
+    if ("serviceWorker" in navigator) {
+      const registration = (await navigator.serviceWorker.getRegistration("./")) || (await navigator.serviceWorker.ready);
+      const controllerChange = new Promise((resolve) => {
+        navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true });
+      });
+      await registration.update();
+      const worker = registration.waiting || registration.installing;
+      if (registration.waiting) registration.waiting.postMessage({ type: "SKIP_WAITING" });
+      if (worker) await waitForWorkerActivation(worker);
+      registration.active?.postMessage({ type: "CLEAR_OLD_CACHES" });
+      await Promise.race([controllerChange, wait(1400)]);
+    }
+    if ("caches" in globalThis) {
+      const cacheKeys = await caches.keys();
+      await Promise.all(
+        cacheKeys
+          .filter((key) => key.startsWith("drivedock-") && key !== state.version.cacheName)
+          .map((key) => caches.delete(key)),
+      );
+    }
+    location.reload();
+  } catch (error) {
+    state.version.updating = false;
+    state.version.error = `更新套用失敗：${error.message}`;
+    renderVersionInfo();
+    if (!automatic) showToast("更新失敗，請稍後再試", "error");
+  }
+}
+
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return null;
+  try {
+    return await navigator.serviceWorker.register("./sw.js", { scope: "./", updateViaCache: "none" });
+  } catch (error) {
+    console.warn("Service worker registration failed", error);
+    return null;
+  }
+}
 
 function routeFromHash() {
   const value = location.hash.replace(/^#/, "").split("?")[0];
@@ -785,6 +1017,14 @@ function renderFiles() {
   });
   body.replaceChildren(fragment);
   $("#file-count").textContent = String(records.length);
+  $("#file-summary-count").textContent = String(records.length);
+  $("#file-summary-size").textContent = formatBytes(records.reduce((sum, record) => sum + record.sizeBytes, 0));
+  const latestRecord = records.reduce((latest, record) => {
+    if (!latest) return record;
+    return new Date(record.createdTime) > new Date(latest.createdTime) ? record : latest;
+  }, null);
+  $("#file-summary-latest").textContent = latestRecord ? formatDate(latestRecord.createdTime, false) : "—";
+  $("#file-summary-latest-name").textContent = latestRecord ? latestRecord.name : "尚無檔案";
   $("#file-empty").hidden = records.length > 0;
   $("#file-table").hidden = records.length === 0;
   $("#selected-file-count").textContent = String(state.selectedFiles.size);
@@ -1970,6 +2210,10 @@ function renderSettings() {
     makeStatusRow("公開下載", config.publicDownloads === false ? "停用" : "經後端串流"),
   );
   $("#auth-setting-state").textContent = state.user ? (state.canManage ? "管理員" : "已登入") : "未登入";
+  $("#overview-connection").textContent = DEMO_MODE ? "展示模式" : CONFIG.API_BASE_URL ? "已設定" : "待設定";
+  $("#overview-drive").textContent = config.driveConfigured ? "已連線" : DEMO_MODE ? "展示模式" : "待設定";
+  $("#overview-auth").textContent = state.user ? (state.canManage ? "管理員" : "已登入") : "未登入";
+  renderVersionInfo();
   $("#scan-storage").disabled = !state.canManage || !navigator.onLine;
   $("#cleanup-storage").disabled = !state.canManage || !navigator.onLine;
   renderGoogleSetup();
@@ -2264,11 +2508,14 @@ function initializeEvents() {
   window.addEventListener("online", () => {
     updateOnlineStatus();
     renderUploadQueue();
+    renderVersionInfo();
+    void checkForAppUpdate({ manual: false, autoApply: true });
     showToast("網路已恢復");
   });
   window.addEventListener("offline", () => {
     updateOnlineStatus();
     renderUploadQueue();
+    renderVersionInfo();
     showToast("目前離線，上傳與管理功能已暫停", "error");
   });
   window.addEventListener("beforeinstallprompt", (event) => {
@@ -2299,6 +2546,24 @@ function initializeEvents() {
   $("#google-signout").addEventListener("click", signOut);
   $("#install-button").addEventListener("click", installApp);
   $("#setting-install").addEventListener("click", installApp);
+  $("#check-update").addEventListener("click", () => checkForAppUpdate({ manual: true, autoApply: false }));
+  $("#apply-update").addEventListener("click", () => applyAppUpdate({ automatic: false }));
+  $("#auto-update-toggle").addEventListener("change", (event) => {
+    state.version.autoUpdate = event.target.checked;
+    localStorage.setItem("drivedock_auto_update", JSON.stringify(state.version.autoUpdate));
+    renderVersionInfo();
+    showToast(state.version.autoUpdate ? "已開啟自動更新" : "已改為手動更新");
+    if (state.version.autoUpdate && state.version.updateAvailable) void applyAppUpdate({ automatic: true });
+  });
+  $$('[data-setting-target]').forEach((button) => {
+    button.addEventListener("click", () => {
+      const card = $(`[data-setting-id="${button.dataset.settingTarget}"]`);
+      if (!card) return;
+      card.open = true;
+      card.scrollIntoView({ behavior: "smooth", block: "start" });
+      setTimeout(() => card.querySelector("summary")?.focus({ preventScroll: true }), 280);
+    });
+  });
 
   $$('[data-open-upload]').forEach((button) => button.addEventListener("click", () => openUpload(button.dataset.openUpload)));
   $("#file-dropzone").addEventListener("click", () => openUpload("file"));
@@ -2402,13 +2667,14 @@ async function initialize() {
     sessionStorage.removeItem("drivedock_bootstrap_notice");
     showToast(setupNotice);
   }
-  if ("serviceWorker" in navigator) {
-    try {
-      await navigator.serviceWorker.register("./sw.js", { scope: "./" });
-    } catch (error) {
-      console.warn("Service worker registration failed", error);
-    }
+  await registerServiceWorker();
+  renderVersionInfo();
+  const updateNotice = sessionStorage.getItem("drivedock_update_notice");
+  if (updateNotice) {
+    sessionStorage.removeItem("drivedock_update_notice");
+    showToast(updateNotice);
   }
+  await checkForAppUpdate({ manual: false, autoApply: true });
 }
 
 initialize();

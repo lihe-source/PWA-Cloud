@@ -1,8 +1,8 @@
-# 雲匣 DriveDock v1.1
+# 雲匣 DriveDock v1.2
 
 一套可安裝在手機與電腦的 PWA 檔案櫃。前端部署到 GitHub Pages，後端部署到 Google Cloud Run；檔案、相片、備註 JSON 與附件全部儲存在同一個 Google Drive 資料夾，並以 `appProperties` 分類，不需要建立很多子資料夾。
 
-v1.1 可由網站管理員在「系統設定」頁輸入自己申請的 Google 登入 Web Client ID，以及要存放全站資料的 Google Drive 資料夾名稱、網址或 ID。設定完成後全站共用同一組值；一般使用者與匿名訪客不會各自選擇資料夾。
+v1.2 可由網站管理員在「系統設定」頁輸入自己申請的 Google 登入 Web Client ID，以及要存放全站資料的 Google Drive 資料夾名稱、網址或 ID。設定完成後全站共用同一組值；一般使用者與匿名訪客不會各自選擇資料夾。
 
 > 尚未填入 API 網址時，前端會進入展示模式。展示資料只留在目前裝置，不會寫入 Google Drive。
 
@@ -163,7 +163,7 @@ gcloud run deploy drivedock-api \
 
 推送到 `main` 後，`Deploy PWA to GitHub Pages` workflow 只打包 9 個扁平前端檔案。變數留空時仍可發佈；若 `PUBLIC_API_URL` 為空，網站會停留在展示模式。
 
-### 6. 在網站完成 v1.1 共用設定
+### 6. 在網站完成 v1.2 共用設定
 
 1. 在 Google Cloud Console 建立 OAuth 2.0 **Web application** Client ID。
 2. Authorized JavaScript origins 加入正式 PWA origin，例如 `https://app.example.com`；本機測試可另加 `http://localhost:8080`。
@@ -179,7 +179,7 @@ gcloud run deploy drivedock-api \
 - 找不到同名資料夾時，API 會在 Shared Drive 根目錄建立它。
 - 只找到一個時會驗證並使用它。
 - 找到多個同名資料夾時會要求改貼網址或 ID，避免選錯。
-- 一旦目標資料夾已有 DriveDock 資料，v1.1 會鎖定綁定並阻止直接切換。請先選好資料夾；目前沒有自動跨資料夾遷移功能。
+- 一旦目標資料夾已有 DriveDock 資料，v1.2 會鎖定綁定並阻止直接切換。請先選好資料夾；目前沒有自動跨資料夾遷移功能。
 
 後端會把非秘密的全站值保存為指定資料夾內的 `.drivedock-config.json`，因此檔案、相片、備註、附件與程式設定都維持在同一個扁平資料夾。伺服器端的實際結果是唯一依據：前端會讀取 `GET /api/config` 回傳的 `googleClientId`、`folderName`、`driveConfigured` 與 `setupRequired`。Drive 設定檔有值時會優先於 `GOOGLE_WEB_CLIENT_ID`／`DRIVE_FOLDER_ID` 環境變數 fallback。
 
@@ -251,3 +251,11 @@ npm start
 ## PWA 圖示
 
 原創圖示以「雲端容器、文件與上傳箭頭」組合，避免直接使用 Google Drive 商標。專案包含一般 192／512 圖示、maskable 512 圖示，以及 `icon-master.png` 原始高解析版本。
+
+
+## v1.2.0 介面與更新機制
+
+- 頁首固定顯示目前版本。
+- 啟動時讀取 `version.json` 自動檢查版本，可在設定頁手動檢查與立即更新。
+- `sw.js` 採版本化快取並清除舊快取。
+- 檔案頁新增數量、容量與最近上傳摘要；設定頁新增系統狀態總覽。

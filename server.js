@@ -10,7 +10,7 @@ import { GoogleAuth, OAuth2Client } from "google-auth-library";
 import { google } from "googleapis";
 
 const APP_ID = "drivedock";
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 const PORT = Number(process.env.PORT) || 8080;
 const HARD_MAX_FILE_BYTES = 524288000;
 const MAX_FILE_BYTES = Math.min(
@@ -1688,6 +1688,7 @@ const FRONTEND_FILES = new Set([
   "app.js",
   "config.js",
   "sw.js",
+  "version.json",
   "manifest.webmanifest",
   "icon-192.png",
   "icon-512.png",
