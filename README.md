@@ -1,6 +1,6 @@
-# 雲匣 DriveDock V1.4.0
+# 雲匣 DriveDock V1.5.0
 
-DriveDock 是一套可安裝在 iPhone、Android 與桌面瀏覽器的 PWA 檔案櫃。V1.4.0 已改為 **GitHub Pages 純前端架構**：使用 Google Identity Services 取得短效 Access Token，再由瀏覽器直接呼叫 Google Drive REST API。
+DriveDock 是一套可安裝在 iPhone、Android 與桌面瀏覽器的 PWA 檔案櫃。V1.5.0 採用 **GitHub Pages 純前端架構**：使用 Google Identity Services 取得短效 Access Token，再由瀏覽器直接呼叫 Google Drive REST API。此版加強 iPhone 圖片複製與登入狀態恢復。
 
 ```text
 GitHub Pages PWA
@@ -24,11 +24,12 @@ Google Drive API
 - 檔案、相片與備註列表使用固定標題列的可滾動表格。
 - 多檔上傳，單檔上限 500 MB，8 MB 分段可續傳。
 - 檔案重新命名、批次移到 Google Drive 垃圾桶。
-- 相片預覽、篩選、批次刪除與複製圖片。
+- 相片預覽、篩選、批次刪除與 iPhone 相容的圖片複製。
 - 備註以 JSON 檔案保存，可加入多個附件。
 - 深色／淺色模式、PWA 安裝、離線 App Shell。
 - 啟動時自動檢查版本，也可手動檢查及更新。
-- 相容 V1.3.0 使用相同 `appProperties` 建立的檔案、相片、備註與附件。
+- 相容 V1.3.0／V1.4.0 使用相同 `appProperties` 建立的檔案、相片、備註與附件。
+- 記住已登入帳號與尚未過期的短效授權；關閉 PWA 後可自動恢復。
 
 ## 檔案結構
 
@@ -153,11 +154,16 @@ Settings
 7. 同意 Google Drive 權限。
 8. 成功後會顯示資料夾名稱與遮罩後的 Folder ID。
 
-Client ID 與 Folder ID 會儲存在目前瀏覽器的 `localStorage`。Access Token 只存在記憶體，不會寫入 `localStorage`、設定檔或 ZIP。重新開啟 PWA或權杖到期後，需要再次點擊 Google 登入。
+Client ID、Folder ID、已登入帳號與尚未過期的短效 Access Token 會儲存在目前裝置的瀏覽器儲存空間。重新開啟 PWA 時：
+
+- 權杖仍有效：直接恢復 Google Drive 連線。
+- 權杖已到期：保留帳號顯示，並在下一次使用者操作時自動嘗試取得新權杖。
+- Google 或瀏覽器要求重新確認時，仍可能需要點一次授權；純前端網頁無法安全保存 Refresh Token。
+- 只有按下「登出此裝置」時，才會清除已記住的帳號與本機授權資料。
 
 ## Google Drive 權限
 
-V1.4.0 使用完整 Google Drive scope，才能直接存取使用者貼入的既有 Folder ID、共享資料夾及 V1.3.0 已建立的資料。Google OAuth 可能顯示較廣泛的 Drive 授權說明。
+V1.5.0 使用完整 Google Drive scope，才能直接存取使用者貼入的既有 Folder ID、共享資料夾及 V1.3.0 已建立的資料。Google OAuth 可能顯示較廣泛的 Drive 授權說明。
 
 請確認：
 
@@ -176,11 +182,11 @@ V1.4.0 使用完整 Google Drive scope，才能直接存取使用者貼入的既
 
 ## 相片複製
 
-V1.4.0 的相片複製流程會：
+V1.5.0 的相片複製流程會：
 
-1. 使用目前 Google Access Token 從 Drive 讀取原始圖片。
-2. 將圖片轉成 PNG。
-3. 透過 Clipboard API 寫入剪貼簿。
+1. 開啟預覽時，先使用目前 Google Access Token 從 Drive 讀取原始圖片。
+2. 預先將圖片轉成 PNG，並暫存在記憶體快取。
+3. 「複製」按鈕準備完成後，使用者點擊當下立即呼叫 Clipboard API，避免 iOS 因非同步等待而失去使用者授權。
 
 必要條件：
 
@@ -202,7 +208,7 @@ V1.4.0 的相片複製流程會：
 目前版本：
 
 ```text
-V1.4.0
+V1.5.0
 ```
 
 程式啟動時會讀取 `version.json`。發現新版本時，會更新 Service Worker、清除舊的 DriveDock Cache Storage，並重新載入。

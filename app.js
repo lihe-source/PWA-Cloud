@@ -10,6 +10,9 @@ function readLocalJson(key, fallback) {
 }
 
 const DIRECT_SETTINGS_KEY = "drivedock_direct_settings";
+const AUTH_SESSION_KEY = "drivedock_auth_session";
+const AUTH_REFRESH_LEAD_MS = 60 * 1000;
+const AUTH_VALIDITY_SKEW_MS = 15 * 1000;
 const savedDirectSettings = readLocalJson(DIRECT_SETTINGS_KEY, {});
 const CONFIG = Object.freeze({
   ...baseConfig,
@@ -21,7 +24,7 @@ const CONFIG = Object.freeze({
 });
 const DEMO_MODE = false;
 const APP_ID = "drivedock";
-const APP_VERSION = String(CONFIG.VERSION || "1.4.0");
+const APP_VERSION = String(CONFIG.VERSION || "1.5.0");
 const APP_BUILD_DATE = String(CONFIG.BUILD_DATE || "2026-07-13");
 const APP_CACHE_NAME = String(CONFIG.CACHE_NAME || `drivedock-v${APP_VERSION}`);
 const VERSION_MANIFEST_URL = "./version.json";
@@ -258,7 +261,53 @@ function currentFolderId() {
 }
 
 function hasDriveSession() {
-  return Boolean(state?.accessToken && Date.now() < Number(state.tokenExpiresAt || 0) - 15000);
+  return Boolean(state?.accessToken && Date.now() < Number(state.tokenExpiresAt || 0) - AUTH_VALIDITY_SKEW_MS);
+}
+
+function readPersistedAuth() {
+  const raw = readLocalJson(AUTH_SESSION_KEY, null);
+  if (!raw || typeof raw !== "object") return null;
+  const user = raw.user && typeof raw.user === "object" ? {
+    id: String(raw.user.id || ""),
+    name: String(raw.user.name || raw.user.email || "Google 使用者"),
+    email: String(raw.user.email || ""),
+    picture: String(raw.user.picture || ""),
+  } : null;
+  if (!user?.name && !user?.email) return null;
+  return {
+    accessToken: String(raw.accessToken || ""),
+    tokenExpiresAt: Number(raw.tokenExpiresAt || 0),
+    clientId: normalizeGoogleClientId(raw.clientId || ""),
+    user,
+  };
+}
+
+function persistAuthSession() {
+  if (!state.user) return;
+  localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({
+    accessToken: state.accessToken || "",
+    tokenExpiresAt: Number(state.tokenExpiresAt || 0),
+    clientId: state.googleClientId || state.tokenClientId || "",
+    user: state.user,
+  }));
+  localStorage.setItem("drivedock_profile_hint", JSON.stringify(state.user));
+}
+
+function expireDriveAuthorization({ preserveAccount = true } = {}) {
+  state.accessToken = "";
+  state.tokenExpiresAt = 0;
+  state.canManage = false;
+  state.authNeedsReconnect = Boolean(preserveAccount && state.user);
+  if (preserveAccount && state.user) persistAuthSession();
+  else localStorage.removeItem(AUTH_SESSION_KEY);
+  renderAccount();
+  renderSettings();
+}
+
+function clearPersistedAuth() {
+  localStorage.removeItem(AUTH_SESSION_KEY);
+  localStorage.removeItem("drivedock_profile_hint");
+  localStorage.removeItem("drivedock_oauth_granted");
 }
 
 function makeApiError(message, status = 400, code = "DRIVE_ERROR", retryable = false) {
@@ -300,12 +349,7 @@ async function driveFetch(pathOrUrl, options = {}) {
   if (!response.ok) {
     const error = await parseGoogleError(response);
     if (response.status === 401) {
-      state.accessToken = "";
-      state.tokenExpiresAt = 0;
-      state.user = null;
-      state.canManage = false;
-      renderAccount();
-      renderSettings();
+      expireDriveAuthorization({ preserveAccount: true });
     }
     throw error;
   }
@@ -850,6 +894,9 @@ const state = {
   tokenExpiresAt: 0,
   tokenClient: null,
   tokenClientId: "",
+  authNeedsReconnect: false,
+  authRequestInFlight: false,
+  authRefreshGestureBound: false,
   files: [],
   photos: [],
   notes: [],
@@ -874,6 +921,8 @@ const state = {
   noteExistingAttachments: [],
   noteReadOnly: false,
   viewerPhoto: null,
+  viewerPhotoPngBlob: null,
+  photoPngCache: new Map(),
   copyingPhotoId: "",
   installPrompt: null,
   apiConfig: null,
@@ -1130,7 +1179,7 @@ function updateOnlineStatus() {
   dot.classList.toggle("is-offline", !online);
   $("#connection-label").textContent = online ? "網路連線正常" : "離線模式";
   if (!online) setSyncStatus("離線，暫停上傳", "offline");
-  else if (!hasDriveSession()) setSyncStatus("請登入 Google", "offline");
+  else if (!hasDriveSession()) setSyncStatus(state.user ? "帳號已記住，點一下恢復連線" : "請登入 Google", state.user ? "checking" : "offline");
   else if (!currentFolderId()) setSyncStatus("請設定 Drive 資料夾", "checking");
   else setSyncStatus("Drive 已連線", "online");
   $("#scan-storage").disabled = !hasDriveSession() || !currentFolderId() || !online;
@@ -1163,6 +1212,8 @@ function toggleTheme() {
 
 function renderAccount() {
   const user = state.user;
+  const authorized = hasDriveSession();
+  const remembered = Boolean(user && !authorized);
   const avatar = $("#account-avatar");
   avatar.replaceChildren();
   if (user?.picture) {
@@ -1175,20 +1226,44 @@ function renderAccount() {
     avatar.textContent = initials(user?.name || "?");
   }
   $("#account-name").textContent = user?.name || "Google 帳戶";
-  $("#account-status").textContent = user ? "Drive 已授權" : state.googleClientId ? "點此連接 Google" : "尚未設定 Client ID";
-  $("#google-signin").hidden = Boolean(user);
+  $("#account-status").textContent = authorized
+    ? "Drive 已授權"
+    : remembered
+      ? "帳號已記住，點一下恢復連線"
+      : state.googleClientId
+        ? "點此連接 Google"
+        : "尚未設定 Client ID";
+  $("#google-signin").hidden = authorized;
+  $("#google-signin").textContent = remembered ? "恢復 Google 連線" : "使用 Google 登入";
   $("#google-signout").hidden = !user;
-  $("#auth-setting-state").textContent = user ? "已授權" : "未登入";
-  $("#scan-storage").disabled = !hasDriveSession() || !currentFolderId() || !navigator.onLine;
-  $("#cleanup-storage").disabled = !hasDriveSession() || !currentFolderId() || !navigator.onLine;
+  $("#auth-setting-state").textContent = authorized ? "已授權" : remembered ? "已記住" : "未登入";
+  $("#scan-storage").disabled = !authorized || !currentFolderId() || !navigator.onLine;
+  $("#cleanup-storage").disabled = !authorized || !currentFolderId() || !navigator.onLine;
   renderGoogleSetup();
 }
 
 async function restoreSession() {
-  state.user = null;
+  const stored = readPersistedAuth();
+  const hint = readLocalJson("drivedock_profile_hint", null);
+  const configuredClientId = normalizeGoogleClientId(state.googleClientId || directSettings().googleClientId || CONFIG.GOOGLE_CLIENT_ID);
+  state.user = stored?.user || (hint?.name || hint?.email ? {
+    id: String(hint.id || hint.email || ""),
+    name: String(hint.name || hint.email || "Google 使用者"),
+    email: String(hint.email || ""),
+    picture: String(hint.picture || ""),
+  } : null);
   state.canManage = false;
   state.accessToken = "";
   state.tokenExpiresAt = 0;
+  state.authNeedsReconnect = Boolean(state.user);
+
+  const sameClient = !stored?.clientId || !configuredClientId || stored.clientId === configuredClientId;
+  if (stored?.accessToken && stored.tokenExpiresAt > Date.now() + AUTH_VALIDITY_SKEW_MS && sameClient) {
+    state.accessToken = stored.accessToken;
+    state.tokenExpiresAt = stored.tokenExpiresAt;
+    state.canManage = true;
+    state.authNeedsReconnect = false;
+  }
   renderAccount();
 }
 
@@ -1198,6 +1273,8 @@ async function finishGoogleAuthorization(response) {
   }
   state.accessToken = response.access_token;
   state.tokenExpiresAt = Date.now() + Math.max(60, Number(response.expires_in || 3600)) * 1000;
+  state.authNeedsReconnect = false;
+  state.authRequestInFlight = false;
   localStorage.setItem("drivedock_oauth_granted", "1");
 
   const userResponse = await fetch(GOOGLE_USERINFO_URL, {
@@ -1213,7 +1290,7 @@ async function finishGoogleAuthorization(response) {
     picture: profile.picture || "",
   };
   state.canManage = true;
-  localStorage.setItem("drivedock_profile_hint", JSON.stringify({ name: state.user.name }));
+  persistAuthSession();
   renderAccount();
   closeAccountMenu();
   setSyncStatus("Google Drive 已授權", "online");
@@ -1265,13 +1342,20 @@ function initializeGoogleSignIn(attempt = 0, force = false) {
     client_id: clientId,
     scope: GOOGLE_OAUTH_SCOPE,
     callback: (response) => {
+      state.authRequestInFlight = false;
       void finishGoogleAuthorization(response).catch((error) => {
+        state.authRequestInFlight = false;
+        state.authNeedsReconnect = Boolean(state.user);
         showToast(`Google 授權失敗：${error.message}`, "error");
         renderAccount();
       });
     },
     error_callback: (error) => {
-      showToast(`Google 授權視窗失敗：${error?.message || error?.type || "請確認 OAuth 網域設定"}`, "error");
+      state.authRequestInFlight = false;
+      state.authNeedsReconnect = Boolean(state.user);
+      const reason = error?.message || error?.type || "請確認 OAuth 網域設定";
+      if (error?.type !== "popup_closed") showToast(`Google 授權視窗失敗：${reason}`, "error");
+      renderAccount();
     },
   });
   state.tokenClientId = clientId;
@@ -1279,20 +1363,40 @@ function initializeGoogleSignIn(attempt = 0, force = false) {
   renderAccount();
 }
 
-function requestGoogleSignIn({ forceConsent = false } = {}) {
+function requestGoogleSignIn({ forceConsent = false, quiet = false } = {}) {
   const clientId = normalizeGoogleClientId(state.googleClientId || directSettings().googleClientId || CONFIG.GOOGLE_CLIENT_ID);
   if (!isValidGoogleClientId(clientId)) {
-    location.hash = "#settings";
-    showToast("請先填入有效的 Google OAuth Web Client ID", "error");
-    return;
+    if (!quiet) {
+      location.hash = "#settings";
+      showToast("請先填入有效的 Google OAuth Web Client ID", "error");
+    }
+    return false;
   }
   initializeGoogleSignIn(0, true);
   if (!state.tokenClient) {
-    showToast("Google 授權服務尚未載入，請稍後重試", "error");
-    return;
+    if (!quiet) showToast("Google 授權服務尚未載入，請稍後重試", "error");
+    return false;
   }
+  if (state.authRequestInFlight) return true;
   const hasGrantedBefore = localStorage.getItem("drivedock_oauth_granted") === "1";
-  state.tokenClient.requestAccessToken({ prompt: forceConsent || !hasGrantedBefore ? "consent" : "" });
+  state.authRequestInFlight = true;
+  try {
+    state.tokenClient.requestAccessToken({ prompt: forceConsent || !hasGrantedBefore ? "consent" : "" });
+    return true;
+  } catch (error) {
+    state.authRequestInFlight = false;
+    if (!quiet) showToast(`無法開啟 Google 授權：${error.message}`, "error");
+    return false;
+  }
+}
+
+function maybeRefreshAuthorizationFromGesture(event) {
+  if (!state.user || state.authRequestInFlight || !navigator.onLine) return;
+  const trigger = event?.target?.closest?.("button, a, [role='button']");
+  if (!trigger || trigger.closest("#google-signout, #copy-photo, .photo-copy-action, [data-close-modal]")) return;
+  const expiresSoon = !hasDriveSession() || Number(state.tokenExpiresAt || 0) - Date.now() < AUTH_REFRESH_LEAD_MS;
+  if (!expiresSoon) return;
+  requestGoogleSignIn({ quiet: true });
 }
 
 async function signOut() {
@@ -1312,7 +1416,9 @@ async function signOut() {
   state.filesLoaded = false;
   state.photosLoaded = false;
   state.notesLoaded = false;
-  localStorage.removeItem("drivedock_profile_hint");
+  state.authNeedsReconnect = false;
+  state.authRequestInFlight = false;
+  clearPersistedAuth();
   renderAccount();
   renderFiles();
   renderPhotos();
@@ -1771,7 +1877,10 @@ function renderPhotos() {
     copy.dataset.photoId = photo.id;
     copy.disabled = Boolean(state.copyingPhotoId);
     copy.setAttribute("aria-label", `複製 ${photo.name}`);
-    copy.addEventListener("click", () => copyCurrentPhoto(photo));
+    copy.addEventListener("click", () => {
+      openPhotoViewer(photo);
+      showToast("完整圖片準備完成後，可按右上角「複製」");
+    });
     actions.append(view, copy);
     actionTd.append(actions);
 
@@ -1816,8 +1925,36 @@ async function loadPhotos(force = false) {
   }
 }
 
+function cachePhotoPng(photoId, blob) {
+  if (!photoId || !(blob instanceof Blob) || !blob.size) return;
+  state.photoPngCache.delete(photoId);
+  state.photoPngCache.set(photoId, blob);
+  while (state.photoPngCache.size > 4) {
+    const oldestKey = state.photoPngCache.keys().next().value;
+    state.photoPngCache.delete(oldestKey);
+  }
+}
+
+function updateViewerCopyButton(photo, status = "ready") {
+  const button = $("#copy-photo");
+  if (!button || state.viewerPhoto?.id !== photo?.id) return;
+  const busy = status === "loading" || status === "copying";
+  const unavailable = status === "error";
+  button.disabled = busy || unavailable;
+  button.setAttribute("aria-busy", busy ? "true" : "false");
+  button.textContent = status === "loading"
+    ? "準備圖片…"
+    : status === "copying"
+      ? "複製中…"
+      : unavailable
+        ? "無法複製"
+        : "複製圖片";
+  button.dataset.mobileLabel = status === "loading" ? "準備中" : status === "copying" ? "處理中" : unavailable ? "失敗" : "複製";
+}
+
 function openPhotoViewer(photo) {
   state.viewerPhoto = photo;
+  state.viewerPhotoPngBlob = state.photoPngCache.get(photo.id) || null;
   $("#photo-viewer-title").textContent = photo.name;
   $("#photo-viewer-meta").textContent = `${formatDate(photo.createdTime)} · ${formatBytes(photo.sizeBytes)} · ${uploaderLabel(photo)}`;
   const image = $("#photo-viewer-image");
@@ -1825,19 +1962,26 @@ function openPhotoViewer(photo) {
   state.photoObjectUrl = "";
   image.src = photo.thumbnailUrl || "./icon-512.png";
   image.alt = photo.name;
-  const copyButton = $("#copy-photo");
-  copyButton.disabled = Boolean(state.copyingPhotoId);
-  copyButton.dataset.mobileLabel = state.copyingPhotoId ? "處理中" : "複製";
-  openModal("photo-viewer", copyButton);
+  updateViewerCopyButton(photo, state.viewerPhotoPngBlob ? "ready" : "loading");
+  openModal("photo-viewer", $("#copy-photo"));
+
+  if (state.viewerPhotoPngBlob) return;
   void fetchDriveBlob(photo.id)
-    .then((blob) => {
+    .then(async (blob) => {
       if (state.viewerPhoto?.id !== photo.id) return;
       state.photoObjectUrl = URL.createObjectURL(blob);
       image.src = state.photoObjectUrl;
+      const pngBlob = await imageBlobToPng(blob);
+      cachePhotoPng(photo.id, pngBlob);
+      if (state.viewerPhoto?.id === photo.id) {
+        state.viewerPhotoPngBlob = pngBlob;
+        updateViewerCopyButton(photo, "ready");
+      }
     })
     .catch((error) => {
-      console.warn("DriveDock preview failed", error);
-      showToast(`無法載入完整圖片：${error.message}`, "error");
+      console.warn("DriveDock preview/copy preparation failed", error);
+      if (state.viewerPhoto?.id === photo.id) updateViewerCopyButton(photo, "error");
+      showToast(`無法準備完整圖片：${error.message}`, "error");
     });
 }
 
@@ -1903,50 +2047,67 @@ async function imageBlobToPng(blob) {
 }
 
 async function fetchPhotoAsPng(photo) {
+  const cached = state.photoPngCache.get(photo.id);
+  if (cached) return cached;
   const blob = await fetchDriveBlob(photo.id);
   if (!blob.type.startsWith("image/")) {
     throw new Error(`Google Drive 回傳的內容不是圖片（${blob.type || "未知格式"}）`);
   }
-  return imageBlobToPng(blob);
+  const pngBlob = await imageBlobToPng(blob);
+  cachePhotoPng(photo.id, pngBlob);
+  return pngBlob;
 }
 
 function setPhotoCopyBusy(photo, busy) {
   state.copyingPhotoId = busy ? photo.id : "";
-  const viewerButton = $("#copy-photo");
-  if (viewerButton) {
-    viewerButton.disabled = busy;
-    viewerButton.setAttribute("aria-busy", busy ? "true" : "false");
-    viewerButton.textContent = busy ? "複製中…" : "複製圖片";
-    viewerButton.dataset.mobileLabel = busy ? "處理中" : "複製";
-  }
+  updateViewerCopyButton(photo, busy ? "copying" : "ready");
   $$(".photo-copy-action").forEach((button) => {
     button.disabled = busy;
     if (button.dataset.photoId === photo.id) button.textContent = busy ? "處理中" : "複製";
   });
 }
 
-async function copyCurrentPhoto(photoOverride = null) {
-  const photo = photoOverride || state.viewerPhoto;
+function copyCurrentPhoto(photoOverride = null) {
+  const photo = photoOverride?.id ? photoOverride : state.viewerPhoto;
   if (!photo || state.copyingPhotoId) return;
-  if (!globalThis.ClipboardItem || !navigator.clipboard?.write) {
-    showToast("此瀏覽器不支援直接複製圖片，請長按圖片後選擇「拷貝」", "error");
+  if (!globalThis.isSecureContext || !globalThis.ClipboardItem || !navigator.clipboard?.write) {
+    showToast("此環境不支援直接複製圖片，請長按圖片後選擇「拷貝」", "error");
+    return;
+  }
+
+  const pngBlob = state.photoPngCache.get(photo.id) || (state.viewerPhoto?.id === photo.id ? state.viewerPhotoPngBlob : null);
+  if (!(pngBlob instanceof Blob) || !pngBlob.size) {
+    showToast("圖片仍在準備中，請等按鈕恢復為「複製」後再按一次", "error");
+    return;
+  }
+
+  let writePromise;
+  try {
+    // WebKit 會在 await／fetch 後失去使用者啟用狀態，因此必須在 click 當下立即呼叫 write()。
+    const item = new ClipboardItem({ "image/png": pngBlob });
+    writePromise = navigator.clipboard.write([item]);
+  } catch (error) {
+    console.error("DriveDock clipboard start failed", error);
+    showToast(`無法啟動圖片複製：${error.message}`, "error");
     return;
   }
 
   setPhotoCopyBusy(photo, true);
-  try {
-    // Safari / iOS 必須在點擊事件仍具使用者授權時呼叫 clipboard.write。
-    // 將圖片讀取與 PNG 轉換包在 ClipboardItem Promise 內，可避免非同步處理後授權失效。
-    const pngPromise = fetchPhotoAsPng(photo);
-    const item = new ClipboardItem({ "image/png": pngPromise });
-    await navigator.clipboard.write([item]);
-    showToast("圖片已複製，可直接貼到支援圖片的 App");
-  } catch (error) {
-    console.error("DriveDock photo copy failed", error);
-    showToast(`無法複製圖片：${error.message || "請長按圖片後選擇「拷貝」"}`, "error");
-  } finally {
-    setPhotoCopyBusy(photo, false);
-  }
+  Promise.resolve(writePromise)
+    .then(() => showToast("圖片已複製，可直接貼到支援圖片的 App"))
+    .catch((error) => {
+      console.error("DriveDock photo copy failed", error);
+      const detail = error?.name === "NotAllowedError"
+        ? "iOS 未授權這次剪貼簿操作，請確認圖片準備完成後再直接按一次「複製」"
+        : error?.message || "請長按圖片後選擇「拷貝」";
+      showToast(`無法複製圖片：${detail}`, "error");
+    })
+    .finally(() => setPhotoCopyBusy(photo, false));
+}
+
+function handleViewerCopyClick(event) {
+  event.preventDefault();
+  copyCurrentPhoto(state.viewerPhoto);
 }
 
 async function deleteSelectedPhotos() {
@@ -2812,9 +2973,9 @@ function renderGoogleSetup() {
   clientInput.disabled = state.googleSetupBusy;
   folderInput.disabled = state.googleSetupBusy;
   saveButton.disabled = state.googleSetupBusy || !state.user || !online;
-  loginButton.hidden = Boolean(state.user);
+  loginButton.hidden = hasDriveSession();
   loginButton.disabled = state.googleSetupBusy || !online;
-  loginButton.textContent = "儲存設定並登入";
+  loginButton.textContent = state.user ? "恢復 Google 連線" : "儲存設定並登入";
   saveButton.textContent = "驗證並儲存";
 
   if (!state.googleSetupDirty) {
@@ -2825,7 +2986,9 @@ function renderGoogleSetup() {
   if (!online) {
     adminNote.textContent = "目前離線；恢復網路後才能登入及驗證 Google Drive 資料夾。";
   } else if (!state.user) {
-    adminNote.textContent = "請填入 Client ID 與 Folder ID／資料夾網址，再按「儲存設定並登入」。存取權杖只保留在記憶體，不會寫入檔案或 localStorage。";
+    adminNote.textContent = "請填入 Client ID 與 Folder ID／資料夾網址，再按「儲存設定並登入」。";
+  } else if (!hasDriveSession()) {
+    adminNote.textContent = `已記住 ${state.user.name}；下一次操作會自動嘗試恢復 Google Drive 授權，必要時只需確認一次。`;
   } else if (!settings.folderId) {
     adminNote.textContent = "Google 已授權。請按「驗證並儲存」，確認目前帳戶可讀寫此資料夾。";
   } else {
@@ -2843,7 +3006,7 @@ function renderGoogleSetup() {
   if (folderLink) openFolder.href = folderLink;
 
   let badgeState = settings.folderId ? "success" : "idle";
-  let badgeLabel = settings.folderId ? (state.user ? "已連線" : "待登入") : "待設定";
+  let badgeLabel = settings.folderId ? (hasDriveSession() ? "已連線" : state.user ? "已記住" : "待登入") : "待設定";
   if (state.googleSetupBusy) {
     badgeState = "checking";
     badgeLabel = "處理中";
@@ -2880,12 +3043,12 @@ function renderSettings() {
   privacy.replaceChildren(
     makeStatusRow("API 基礎網址", "不需要"),
     makeStatusRow("Client Secret", "不使用、不可填入前端"),
-    makeStatusRow("Access Token", "只存在記憶體，逾期後重新授權"),
+    makeStatusRow("登入保持", "記住帳號與短效權杖；逾期時於下一次操作自動恢復"),
     makeStatusRow("檔案權限", "依登入帳戶的 Google Drive 權限"),
   );
-  $("#auth-setting-state").textContent = state.user ? "已授權" : "未登入";
-  $("#overview-drive").textContent = hasDriveSession() && settings.folderId ? "已連線" : settings.folderId ? "待登入" : "待設定";
-  $("#overview-auth").textContent = state.user ? "已授權" : "未登入";
+  $("#auth-setting-state").textContent = hasDriveSession() ? "已授權" : state.user ? "已記住" : "未登入";
+  $("#overview-drive").textContent = hasDriveSession() && settings.folderId ? "已連線" : settings.folderId ? (state.user ? "待恢復" : "待登入") : "待設定";
+  $("#overview-auth").textContent = hasDriveSession() ? "已授權" : state.user ? "已記住" : "未登入";
   renderVersionInfo();
   $("#scan-storage").disabled = !hasDriveSession() || !settings.folderId || !navigator.onLine;
   $("#cleanup-storage").disabled = !hasDriveSession() || !settings.folderId || !navigator.onLine;
@@ -3030,6 +3193,7 @@ function closeModal(target) {
   if (!$(".modal-backdrop:not([hidden])")) document.body.classList.remove("modal-open");
   if (backdrop.id === "photo-viewer") {
     state.viewerPhoto = null;
+    state.viewerPhotoPngBlob = null;
     if (state.photoObjectUrl) URL.revokeObjectURL(state.photoObjectUrl);
     state.photoObjectUrl = "";
     $("#photo-viewer-image").removeAttribute("src");
@@ -3124,6 +3288,7 @@ function initializeEvents() {
   });
   document.addEventListener("paste", handlePaste);
   document.addEventListener("keydown", handleCopyShortcut);
+  document.addEventListener("pointerdown", maybeRefreshAuthorizationFromGesture, true);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       const open = $(".modal-backdrop:not([hidden])");
@@ -3196,7 +3361,7 @@ function initializeEvents() {
 
   $("#refresh-photos").addEventListener("click", () => loadPhotos(true));
   $("#delete-photos").addEventListener("click", deleteSelectedPhotos);
-  $("#copy-photo").addEventListener("click", copyCurrentPhoto);
+  $("#copy-photo").addEventListener("click", handleViewerCopyClick);
   $$('[data-photo-filter]').forEach((button) =>
     button.addEventListener("click", () => {
       state.photoFilter = button.dataset.photoFilter;
@@ -3256,8 +3421,13 @@ async function initialize() {
   renderSettings();
   applyRoute();
   await Promise.all([loadPublicConfig(), restoreSession()]);
-  if (state.canManage) await loadAdminSettings();
   initializeGoogleSignIn();
+  if (state.canManage) {
+    await loadAdminSettings();
+    await Promise.all([loadFiles(true), loadPhotos(true), loadNotes(true)]);
+  } else if (state.user) {
+    setSyncStatus("帳號已記住，點一下恢復連線", "checking");
+  }
   const setupNotice = sessionStorage.getItem("drivedock_setup_notice") || sessionStorage.getItem("drivedock_bootstrap_notice");
   if (setupNotice) {
     sessionStorage.removeItem("drivedock_setup_notice");

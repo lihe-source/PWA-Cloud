@@ -66,7 +66,7 @@
 <h1 id="page-title">檔案總覽</h1>
 </div>
 <div class="topbar-actions">
-<span aria-label="目前應用程式版本" class="top-version-badge" id="top-version-badge" title="目前應用程式版本"><span class="top-version-label">目前</span><strong id="top-version-value">V1.4.0</strong></span>
+<span aria-label="目前應用程式版本" class="top-version-badge" id="top-version-badge" title="目前應用程式版本"><span class="top-version-label">目前</span><strong id="top-version-value">V1.5.0</strong></span>
 <span class="sync-pill" id="sync-pill">
 <span aria-hidden="true" class="status-dot"></span>
 <span>Drive 檢查中</span>
@@ -264,7 +264,7 @@
 <h2 id="settings-title">系統設定</h2>
 <p>設定 Google OAuth Client ID 與 Drive 資料夾，瀏覽器會直接透過 Google Drive API 存取資料。</p>
 </div>
-<span class="version-pill" id="settings-version-pill">V1.4.0</span>
+<span class="version-pill" id="settings-version-pill">V1.5.0</span>
 </div>
 <section aria-label="系統狀態摘要" class="settings-overview">
 
@@ -280,7 +280,7 @@
 </button>
 <button class="settings-overview-card is-version" data-setting-target="version" type="button">
 <span>應用程式版本</span>
-<strong id="overview-version">V1.4.0</strong>
+<strong id="overview-version">V1.5.0</strong>
 <small id="overview-update-state">自動檢查更新</small>
 </button>
 </section>
@@ -313,7 +313,7 @@
 <div aria-live="polite" class="setup-folder-result" id="setup-folder-summary">
 <span>目前共用資料夾</span>
 <strong id="setup-folder-result">尚未設定</strong>
-<small id="setup-folder-id">設定會留在目前瀏覽器；Access Token 不會永久保存。</small>
+<small id="setup-folder-id">設定與已登入帳號會保留在此裝置；短效權杖到期時會在下一次操作自動嘗試恢復。</small>
 </div>
 <div class="inline-actions setup-actions">
 <a class="secondary-button compact" hidden="" href="#" id="open-storage-folder" rel="noopener" target="_blank">在 Google Drive 開啟</a>
@@ -322,7 +322,7 @@
 </div>
 </div>
 </form>
-<p class="setup-disclaimer">Client ID 與 Folder ID 不是密碼；程式不需要 Client Secret、Refresh Token、Service Account JSON 或 API 基礎網址。請勿把任何 Access Token 貼入設定欄位。</p>
+<p class="setup-disclaimer">Client ID 與 Folder ID 不是密碼；程式不需要 Client Secret、Refresh Token、Service Account JSON 或 API 基礎網址。為了減少重複登入，短效 Access Token 會暫存在此裝置，按「登出此裝置」時會清除。</p>
 </section>
 <section aria-labelledby="settings-order-title" class="settings-order-panel">
 <div>
@@ -377,10 +377,10 @@
 <span class="setting-state" id="auth-setting-state">未連線</span>
 </summary>
 <div class="setting-body">
-<p>使用 Google Identity Services 取得短效 Access Token，再由瀏覽器直接呼叫 Google Drive REST API。重新開啟 PWA 或權杖逾期後，需再次點擊登入。</p>
+<p>使用 Google Identity Services 取得短效 Access Token，再由瀏覽器直接呼叫 Google Drive REST API。重新開啟 PWA 時會恢復尚未過期的授權；權杖逾期後，會在下一次操作自動嘗試恢復。</p>
 <div class="status-list">
 <div><span>授權範圍</span><strong>Google Drive + 基本帳戶資料</strong></div>
-<div><span>權杖保存</span><strong>只存在記憶體，不寫入檔案</strong></div>
+<div><span>登入保持</span><strong>記住帳號與短效權杖，登出時清除</strong></div>
 </div>
 </div>
 </details>
@@ -421,10 +421,10 @@
 <div class="setting-body version-control">
 <dl class="definition-grid version-definition-grid">
 <div><dt>應用程式</dt><dd>雲匣 DriveDock</dd></div>
-<div><dt>目前版本</dt><dd id="current-version-value">V1.4.0</dd></div>
+<div><dt>目前版本</dt><dd id="current-version-value">V1.5.0</dd></div>
 <div><dt>最新版本</dt><dd id="latest-version-value">檢查中</dd></div>
 <div><dt>最新建置日期</dt><dd id="build-date-value">2026-07-13</dd></div>
-<div><dt>最新快取版本</dt><dd id="cache-version-value">drivedock-v1.4.0</dd></div>
+<div><dt>最新快取版本</dt><dd id="cache-version-value">drivedock-v1.5.0</dd></div>
 <div><dt>上次檢查</dt><dd id="last-update-check">尚未檢查</dd></div>
 </dl>
 <div aria-live="polite" class="update-status-panel" data-state="checking" id="update-status-panel" role="status">

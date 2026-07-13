@@ -12,7 +12,7 @@ window.DRIVEDOCK_CONFIG = Object.freeze({
   DRIVE_FOLDER_NAME: "",
   MAX_FILE_BYTES: 524288000,
   UPLOAD_CHUNK_BYTES: 8388608,
-  VERSION: "1.4.0",
+  VERSION: "1.5.0",
   BUILD_DATE: "2026-07-13",
-  CACHE_NAME: "drivedock-v1.4.0",
+  CACHE_NAME: "drivedock-v1.5.0",
 });

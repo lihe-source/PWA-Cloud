@@ -1,14 +1,14 @@
 {
-  "version": "1.4.0",
+  "version": "1.5.0",
   "buildDate": "2026-07-13",
-  "cacheName": "drivedock-v1.4.0",
+  "cacheName": "drivedock-v1.5.0",
   "minimumSupportedVersion": "1.0.0",
   "releaseNotes": [
-    "移除 API 基礎網址、Cloud Run 與 server.js，改為純前端 Google Drive 直連架構。",
-    "改用 Google Identity Services Token Model 取得短效 Access Token。",
-    "設定頁只需 Google OAuth Web Client ID 與 Drive Folder ID／網址／名稱。",
-    "檔案、相片、備註與附件均由瀏覽器直接呼叫 Google Drive REST API。",
-    "相片預覽與複製改為使用授權 Token 讀取原始圖片，修正 iPhone Load failed。",
-    "保留固定標題列與可滾動表格，方便手機一次檢視更多資料。"
+    "修正 iPhone／iOS PWA 複製圖片時出現 NotAllowedError：先在預覽階段完成 PNG 準備，再於點擊當下立即寫入剪貼簿。",
+    "新增圖片 PNG 快取，避免每次按複製都重新下載與轉換。",
+    "Google 帳號、使用者資料與尚未過期的短效 Access Token 會保留在此裝置。",
+    "重新開啟 PWA 後，若權杖仍有效會直接恢復；若已到期，下一次操作會自動嘗試恢復 Google 授權。",
+    "只有使用者按下「登出此裝置」時，才會清除已記住的帳號與本機授權資料。",
+    "保留純前端 Google Drive 架構，不需要 API 基礎網址或 Cloud Run。"
   ]
 }
