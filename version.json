@@ -1,13 +1,14 @@
 {
-  "version": "1.3.0",
-  "buildDate": "2026-07-12",
-  "cacheName": "drivedock-v1.3.0",
+  "version": "1.4.0",
+  "buildDate": "2026-07-13",
+  "cacheName": "drivedock-v1.4.0",
   "minimumSupportedVersion": "1.0.0",
   "releaseNotes": [
-    "檔案、備註與相片列表全面改為固定標題列的可滾動表格。",
-    "手機版取消大型卡片列表，改用緊湊表格以一次顯示更多資料。",
-    "相片列表新增縮圖、檔名、上傳者、時間、大小與操作欄位。",
-    "修正 iPhone／Safari 圖片複製流程，避免非同步處理造成 Load failed。",
-    "圖片內容端點新增 inline 模式，並避免重複錯誤通知。"
+    "移除 API 基礎網址、Cloud Run 與 server.js，改為純前端 Google Drive 直連架構。",
+    "改用 Google Identity Services Token Model 取得短效 Access Token。",
+    "設定頁只需 Google OAuth Web Client ID 與 Drive Folder ID／網址／名稱。",
+    "檔案、相片、備註與附件均由瀏覽器直接呼叫 Google Drive REST API。",
+    "相片預覽與複製改為使用授權 Token 讀取原始圖片，修正 iPhone Load failed。",
+    "保留固定標題列與可滾動表格，方便手機一次檢視更多資料。"
   ]
 }

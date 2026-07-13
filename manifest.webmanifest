@@ -2,17 +2,24 @@
   "id": "./",
   "name": "雲匣 DriveDock",
   "short_name": "雲匣",
-  "description": "以 Google Drive 儲存的跨裝置 PWA 檔案櫃",
+  "description": "免後端、直接連線 Google Drive 的跨裝置 PWA 檔案櫃",
   "lang": "zh-Hant",
   "dir": "ltr",
   "start_url": "./#files",
   "scope": "./",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "display_override": [
+    "window-controls-overlay",
+    "standalone",
+    "minimal-ui"
+  ],
   "orientation": "any",
   "background_color": "#07101c",
   "theme_color": "#08111f",
-  "categories": ["productivity", "utilities"],
+  "categories": [
+    "productivity",
+    "utilities"
+  ],
   "icons": [
     {
       "src": "./icon-192.png",
@@ -38,13 +45,23 @@
       "name": "上傳檔案",
       "short_name": "上傳",
       "url": "./#files?upload=file",
-      "icons": [{ "src": "./icon-192.png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "./icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     },
     {
       "name": "開啟相片圖庫",
       "short_name": "相片",
       "url": "./#photos",
-      "icons": [{ "src": "./icon-192.png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "./icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     }
   ]
 }

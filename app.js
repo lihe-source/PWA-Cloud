@@ -9,20 +9,31 @@ function readLocalJson(key, fallback) {
   }
 }
 
-const localConnection = readLocalJson("drivedock_connection", {});
+const DIRECT_SETTINGS_KEY = "drivedock_direct_settings";
+const savedDirectSettings = readLocalJson(DIRECT_SETTINGS_KEY, {});
 const CONFIG = Object.freeze({
   ...baseConfig,
-  API_BASE_URL: String(localConnection.API_BASE_URL || baseConfig.API_BASE_URL || "").replace(/\/$/, ""),
-  GOOGLE_CLIENT_ID: String(localConnection.GOOGLE_CLIENT_ID || baseConfig.GOOGLE_CLIENT_ID || ""),
+  GOOGLE_CLIENT_ID: String(savedDirectSettings.GOOGLE_CLIENT_ID || baseConfig.GOOGLE_CLIENT_ID || "").trim(),
+  DRIVE_FOLDER_ID: String(savedDirectSettings.DRIVE_FOLDER_ID || baseConfig.DRIVE_FOLDER_ID || "").trim(),
+  DRIVE_FOLDER_NAME: String(savedDirectSettings.DRIVE_FOLDER_NAME || baseConfig.DRIVE_FOLDER_NAME || "").trim(),
   MAX_FILE_BYTES: Number(baseConfig.MAX_FILE_BYTES) || 524288000,
   UPLOAD_CHUNK_BYTES: Number(baseConfig.UPLOAD_CHUNK_BYTES) || 8388608,
 });
-const DEMO_MODE = !CONFIG.API_BASE_URL && CONFIG.DEMO_MODE_WHEN_UNCONFIGURED !== false;
+const DEMO_MODE = false;
 const APP_ID = "drivedock";
-const APP_VERSION = String(CONFIG.VERSION || "1.3.0");
-const APP_BUILD_DATE = String(CONFIG.BUILD_DATE || "2026-07-12");
+const APP_VERSION = String(CONFIG.VERSION || "1.4.0");
+const APP_BUILD_DATE = String(CONFIG.BUILD_DATE || "2026-07-13");
 const APP_CACHE_NAME = String(CONFIG.CACHE_NAME || `drivedock-v${APP_VERSION}`);
 const VERSION_MANIFEST_URL = "./version.json";
+const DRIVE_API_BASE = "https://www.googleapis.com/drive/v3";
+const DRIVE_UPLOAD_BASE = "https://www.googleapis.com/upload/drive/v3";
+const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";
+const GOOGLE_OAUTH_SCOPE = [
+  "openid",
+  "email",
+  "profile",
+  "https://www.googleapis.com/auth/drive",
+].join(" ");
 const PHOTO_MIME_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -32,6 +43,25 @@ const PHOTO_MIME_TYPES = new Set([
   "image/heif",
   "image/avif",
 ]);
+const DRIVE_FILE_FIELDS = [
+  "id",
+  "name",
+  "size",
+  "fileExtension",
+  "mimeType",
+  "createdTime",
+  "modifiedTime",
+  "thumbnailLink",
+  "webViewLink",
+  "webContentLink",
+  "parents",
+  "trashed",
+  "driveId",
+  "appProperties",
+  "capabilities(canEdit,canRename,canTrash,canDownload)",
+  "owners(displayName,emailAddress)",
+  "lastModifyingUser(displayName,emailAddress)",
+].join(",");
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -130,6 +160,21 @@ function normalizeFolderInput(value = "") {
   return String(value).trim().normalize("NFC");
 }
 
+function extractFolderId(value = "") {
+  const input = normalizeFolderInput(value);
+  if (!input) return "";
+  if (/^[a-z0-9_-]{10,200}$/i.test(input)) return input;
+  try {
+    const url = new URL(input);
+    const pathMatch = url.pathname.match(/\/folders\/([a-z0-9_-]{10,200})/i);
+    if (pathMatch) return pathMatch[1];
+    const id = url.searchParams.get("id") || "";
+    return /^[a-z0-9_-]{10,200}$/i.test(id) ? id : "";
+  } catch {
+    return "";
+  }
+}
+
 function maskDriveId(value = "") {
   const id = String(value).trim();
   if (!id) return "";
@@ -144,7 +189,7 @@ function safeDriveFolderLink(value = "", folderId = "") {
       const url = new URL(candidate);
       if (url.protocol === "https:" && url.hostname.toLowerCase() === "drive.google.com") return url.href;
     } catch {
-      // Ignore malformed server values and fall back to the verified folder ID.
+      // Fall through to the verified folder ID.
     }
   }
   const id = String(folderId).trim();
@@ -170,8 +215,8 @@ function normalizeRecord(raw, kind = "file") {
     modifiedTime: raw.modifiedTime || raw.modifiedAt || raw.createdTime || new Date().toISOString(),
     kind: normalizedKind,
     uploader: {
-      type: uploader.type || raw.uploaderType || "anonymous",
-      displayName: uploader.displayName || raw.uploaderName || raw.uploaderLabel || "訪客",
+      type: uploader.type || raw.uploaderType || "google",
+      displayName: uploader.displayName || raw.uploaderName || raw.uploaderLabel || "Google 使用者",
       ipLabel: uploader.ipLabel || raw.uploaderIp || "—",
     },
     permissions: {
@@ -179,42 +224,597 @@ function normalizeRecord(raw, kind = "file") {
       canDelete: Boolean(raw.permissions?.canDelete ?? raw.canDelete),
       canCopy: raw.permissions?.canCopy !== false,
     },
-    contentUrl: raw.contentUrl || apiUrl(`/api/files/${encodeURIComponent(id)}/content`),
-    thumbnailUrl:
-      raw.thumbnailUrl ||
-      (normalizedKind === "photo" ? apiUrl(`/api/files/${encodeURIComponent(id)}/thumbnail`) : ""),
-    webViewLink: raw.webViewLink || "",
+    contentUrl: raw.contentUrl || raw.webViewLink || "",
+    thumbnailUrl: raw.thumbnailUrl || "",
+    webViewLink: raw.webViewLink || raw.contentUrl || "",
+    driveId: raw.driveId || "",
   };
 }
 
-function apiUrl(path) {
-  if (!CONFIG.API_BASE_URL) return path;
-  return `${CONFIG.API_BASE_URL}${path}`;
+function directSettings() {
+  const raw = readLocalJson(DIRECT_SETTINGS_KEY, {});
+  return {
+    googleClientId: normalizeGoogleClientId(raw.GOOGLE_CLIENT_ID || CONFIG.GOOGLE_CLIENT_ID),
+    folderInput: normalizeFolderInput(raw.FOLDER_INPUT || raw.DRIVE_FOLDER_ID || CONFIG.DRIVE_FOLDER_ID),
+    folderId: String(raw.DRIVE_FOLDER_ID || CONFIG.DRIVE_FOLDER_ID || "").trim(),
+    folderName: String(raw.DRIVE_FOLDER_NAME || CONFIG.DRIVE_FOLDER_NAME || "").trim(),
+  };
+}
+
+function saveDirectSettings(values = {}) {
+  const current = directSettings();
+  const next = {
+    GOOGLE_CLIENT_ID: normalizeGoogleClientId(values.googleClientId ?? current.googleClientId),
+    FOLDER_INPUT: normalizeFolderInput(values.folderInput ?? current.folderInput),
+    DRIVE_FOLDER_ID: String(values.folderId ?? current.folderId).trim(),
+    DRIVE_FOLDER_NAME: String(values.folderName ?? current.folderName).trim(),
+  };
+  localStorage.setItem(DIRECT_SETTINGS_KEY, JSON.stringify(next));
+  return next;
+}
+
+function currentFolderId() {
+  return String(state?.adminSettings?.folderId || directSettings().folderId || "").trim();
+}
+
+function hasDriveSession() {
+  return Boolean(state?.accessToken && Date.now() < Number(state.tokenExpiresAt || 0) - 15000);
+}
+
+function makeApiError(message, status = 400, code = "DRIVE_ERROR", retryable = false) {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.retryable = retryable;
+  return error;
+}
+
+async function parseGoogleError(response) {
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    // Non-JSON Google errors are handled by the status fallback.
+  }
+  const message = payload?.error?.message || payload?.error_description || `Google API 回應 ${response.status}`;
+  return makeApiError(message, response.status, payload?.error?.status || `HTTP_${response.status}`, response.status >= 500 || response.status === 429);
+}
+
+async function driveFetch(pathOrUrl, options = {}) {
+  if (!hasDriveSession()) throw makeApiError("Google 授權已失效，請重新登入", 401, "AUTH_REQUIRED");
+  const raw = Boolean(options.raw);
+  const url = /^https?:\/\//i.test(String(pathOrUrl))
+    ? String(pathOrUrl)
+    : `${DRIVE_API_BASE}/${String(pathOrUrl).replace(/^\//, "")}`;
+  const headers = new Headers(options.headers || {});
+  headers.set("Authorization", `Bearer ${state.accessToken}`);
+  if (options.body && !(options.body instanceof Blob) && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json; charset=UTF-8");
+  }
+  const response = await fetch(url, {
+    method: options.method || "GET",
+    headers,
+    body: options.body,
+    cache: options.cache || "no-store",
+  });
+  if (!response.ok) {
+    const error = await parseGoogleError(response);
+    if (response.status === 401) {
+      state.accessToken = "";
+      state.tokenExpiresAt = 0;
+      state.user = null;
+      state.canManage = false;
+      renderAccount();
+      renderSettings();
+    }
+    throw error;
+  }
+  if (raw) return response;
+  if (response.status === 204) return {};
+  const type = response.headers.get("content-type") || "";
+  return type.includes("application/json") ? response.json() : response.text();
+}
+
+function driveQueryValue(value = "") {
+  return String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+function managedQuery(entity, status = "ready") {
+  const folderId = currentFolderId();
+  if (!folderId) throw makeApiError("尚未設定 Google Drive Folder ID", 412, "FOLDER_REQUIRED");
+  return [
+    `'${driveQueryValue(folderId)}' in parents`,
+    "trashed=false",
+    `appProperties has { key='appId' and value='${APP_ID}' }`,
+    `appProperties has { key='entity' and value='${driveQueryValue(entity)}' }`,
+    ...(status ? [`appProperties has { key='status' and value='${driveQueryValue(status)}' }`] : []),
+  ].join(" and ");
+}
+
+function driveUploader(file) {
+  const properties = file.appProperties || {};
+  const fallback = file.lastModifyingUser?.displayName || file.owners?.[0]?.displayName || state.user?.name || "Google 使用者";
+  return {
+    type: "google",
+    displayName: properties.uploaderLabel || fallback,
+    ipLabel: "",
+  };
+}
+
+function publicDriveRecord(file, kind = "file") {
+  const capabilities = file.capabilities || {};
+  const entity = file.appProperties?.entity || kind;
+  return normalizeRecord({
+    ...file,
+    kind: entity,
+    sizeBytes: Number(file.size || 0),
+    uploader: driveUploader(file),
+    permissions: {
+      canRename: Boolean(capabilities.canRename ?? capabilities.canEdit),
+      canDelete: Boolean(capabilities.canTrash ?? capabilities.canEdit),
+      canCopy: String(file.mimeType || "").startsWith("image/"),
+    },
+    contentUrl: file.webViewLink || "",
+    thumbnailUrl: file.thumbnailLink || "",
+    webViewLink: file.webViewLink || "",
+  }, entity);
+}
+
+async function getDriveMetadata(fileId, fields = DRIVE_FILE_FIELDS) {
+  const query = new URLSearchParams({ fields, supportsAllDrives: "true" });
+  return driveFetch(`files/${encodeURIComponent(fileId)}?${query}`);
+}
+
+async function patchDriveMetadata(fileId, requestBody, fields = DRIVE_FILE_FIELDS) {
+  const query = new URLSearchParams({ fields, supportsAllDrives: "true" });
+  return driveFetch(`files/${encodeURIComponent(fileId)}?${query}`, {
+    method: "PATCH",
+    body: JSON.stringify(requestBody),
+  });
+}
+
+async function listManagedFiles(entity, { pageSize = 100, pageToken = "", status = "ready" } = {}) {
+  const query = new URLSearchParams({
+    q: managedQuery(entity, status),
+    pageSize: String(Math.min(1000, Math.max(1, Number(pageSize) || 100))),
+    fields: `nextPageToken,files(${DRIVE_FILE_FIELDS})`,
+    orderBy: "createdTime desc",
+    spaces: "drive",
+    supportsAllDrives: "true",
+    includeItemsFromAllDrives: "true",
+  });
+  if (pageToken) query.set("pageToken", pageToken);
+  return driveFetch(`files?${query}`);
+}
+
+async function fetchDriveBlob(fileId) {
+  const query = new URLSearchParams({ alt: "media", supportsAllDrives: "true" });
+  const response = await driveFetch(`files/${encodeURIComponent(fileId)}?${query}`, { raw: true });
+  return response.blob();
+}
+
+async function resolveDriveFolder(folderInput) {
+  const input = normalizeFolderInput(folderInput);
+  if (!input) throw makeApiError("請輸入 Google Drive Folder ID、網址或資料夾名稱", 400, "FOLDER_REQUIRED");
+  const explicitId = extractFolderId(input);
+  if (explicitId) {
+    const folder = await getDriveMetadata(explicitId, "id,name,mimeType,webViewLink,driveId,capabilities(canAddChildren,canEdit)");
+    if (folder.mimeType !== "application/vnd.google-apps.folder") {
+      throw makeApiError("指定的 ID 不是 Google Drive 資料夾", 422, "NOT_A_FOLDER");
+    }
+    if (folder.capabilities?.canAddChildren === false && folder.capabilities?.canEdit === false) {
+      throw makeApiError("目前帳戶沒有在此資料夾新增檔案的權限", 403, "FOLDER_WRITE_FORBIDDEN");
+    }
+    return folder;
+  }
+
+  if (/[\p{Cc}\\/]/u.test(input) || input.length > 200) {
+    throw makeApiError("資料夾名稱格式不正確", 400, "INVALID_FOLDER_NAME");
+  }
+  const q = [
+    "mimeType='application/vnd.google-apps.folder'",
+    `name='${driveQueryValue(input)}'`,
+    "trashed=false",
+  ].join(" and ");
+  const search = new URLSearchParams({
+    q,
+    pageSize: "20",
+    fields: "files(id,name,mimeType,webViewLink,driveId,capabilities(canAddChildren,canEdit))",
+    spaces: "drive",
+    supportsAllDrives: "true",
+    includeItemsFromAllDrives: "true",
+  });
+  const result = await driveFetch(`files?${search}`);
+  const folders = result.files || [];
+  if (folders.length > 1) throw makeApiError("找到多個同名資料夾，請改貼資料夾網址或 Folder ID", 409, "AMBIGUOUS_FOLDER");
+  if (folders.length === 1) return folders[0];
+
+  const createQuery = new URLSearchParams({ fields: "id,name,mimeType,webViewLink,driveId", supportsAllDrives: "true" });
+  return driveFetch(`files?${createQuery}`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: input,
+      mimeType: "application/vnd.google-apps.folder",
+      appProperties: { appId: APP_ID, entity: "storageFolder", schema: "1" },
+    }),
+  });
+}
+
+function uploaderProperties() {
+  const label = String(state.user?.name || state.user?.email || "Google 使用者").slice(0, 80);
+  const key = String(state.user?.id || state.user?.email || "google-user").slice(0, 100);
+  return {
+    uploaderKind: "google",
+    uploaderKey: key,
+    uploaderLabel: label,
+    guestIpMask: "",
+  };
+}
+
+const uploadSessions = new Map();
+
+async function createResumableSession(payload) {
+  const folderId = currentFolderId();
+  if (!folderId) throw makeApiError("請先設定 Google Drive Folder ID", 412, "FOLDER_REQUIRED");
+  const entity = String(payload.kind || "file");
+  if (!["file", "photo", "noteAttachment"].includes(entity)) throw makeApiError("不支援的檔案分類", 400, "INVALID_FILE_KIND");
+  const sizeBytes = Number(payload.sizeBytes || 0);
+  if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) throw makeApiError("檔案大小必須大於 0", 400, "INVALID_FILE_SIZE");
+  if (sizeBytes > CONFIG.MAX_FILE_BYTES) throw makeApiError("單一檔案不得超過 500 MB", 413, "FILE_TOO_LARGE");
+  const mimeType = String(payload.mimeType || "application/octet-stream").slice(0, 100);
+  if (entity === "photo" && !PHOTO_MIME_TYPES.has(mimeType.toLowerCase())) {
+    throw makeApiError("相片圖庫只接受圖片檔案", 415, "UNSUPPORTED_MEDIA_TYPE");
+  }
+  const generated = await driveFetch("files/generateIds?count=1&space=drive&type=files");
+  const fileId = generated.ids?.[0];
+  if (!fileId) throw makeApiError("Google Drive 未產生檔案 ID", 502, "GENERATE_ID_FAILED", true);
+  const uploadId = uid();
+  const noteId = entity === "noteAttachment" ? String(payload.noteId || "").slice(0, 80) : "";
+  const appProperties = {
+    appId: APP_ID,
+    schema: "1",
+    entity,
+    status: "pending",
+    uploadId,
+    expectedBytes: String(sizeBytes),
+    ...uploaderProperties(),
+    ...(noteId ? { noteId } : {}),
+  };
+  const metadata = {
+    id: fileId,
+    name: String(payload.name || "未命名檔案").slice(0, 200),
+    parents: [folderId],
+    mimeType,
+    appProperties,
+  };
+  const query = new URLSearchParams({ uploadType: "resumable", supportsAllDrives: "true", fields: DRIVE_FILE_FIELDS });
+  const response = await fetch(`${DRIVE_UPLOAD_BASE}/files?${query}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${state.accessToken}`,
+      "Content-Type": "application/json; charset=UTF-8",
+      "X-Upload-Content-Type": mimeType,
+      "X-Upload-Content-Length": String(sizeBytes),
+    },
+    body: JSON.stringify(metadata),
+  });
+  if (!response.ok) throw await parseGoogleError(response);
+  const uploadUrl = response.headers.get("location");
+  if (!uploadUrl) throw makeApiError("Google Drive 未回傳可續傳網址", 502, "UPLOAD_LOCATION_MISSING", true);
+  uploadSessions.set(uploadId, { fileId, appProperties, entity });
+  return {
+    uploadId,
+    fileId,
+    uploadUrl,
+    chunkSizeBytes: CONFIG.UPLOAD_CHUNK_BYTES,
+    finalizeToken: uploadId,
+  };
+}
+
+async function finalizeResumableSession(uploadId) {
+  const session = uploadSessions.get(uploadId);
+  if (!session) throw makeApiError("找不到上傳工作，請重新上傳", 404, "UPLOAD_SESSION_NOT_FOUND");
+  const metadata = await getDriveMetadata(session.fileId);
+  const appProperties = { ...(metadata.appProperties || session.appProperties), status: "ready" };
+  const updated = await patchDriveMetadata(session.fileId, { appProperties });
+  uploadSessions.delete(uploadId);
+  return publicDriveRecord(updated, session.entity);
+}
+
+function makeMultipartBody(metadata, mediaBlob) {
+  const boundary = `drivedock_${uid().replace(/[^a-z0-9]/gi, "")}`;
+  const opening = [
+    `--${boundary}\r\n`,
+    "Content-Type: application/json; charset=UTF-8\r\n\r\n",
+    JSON.stringify(metadata),
+    `\r\n--${boundary}\r\n`,
+    `Content-Type: ${mediaBlob.type || "application/octet-stream"}\r\n\r\n`,
+  ].join("");
+  const closing = `\r\n--${boundary}--`;
+  return { boundary, body: new Blob([opening, mediaBlob, closing]) };
+}
+
+async function multipartCreate(metadata, mediaBlob) {
+  const { boundary, body } = makeMultipartBody(metadata, mediaBlob);
+  const query = new URLSearchParams({ uploadType: "multipart", supportsAllDrives: "true", fields: DRIVE_FILE_FIELDS });
+  return driveFetch(`${DRIVE_UPLOAD_BASE}/files?${query}`, {
+    method: "POST",
+    headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
+    body,
+  });
+}
+
+async function multipartUpdate(fileId, metadata, mediaBlob) {
+  const { boundary, body } = makeMultipartBody(metadata, mediaBlob);
+  const query = new URLSearchParams({ uploadType: "multipart", supportsAllDrives: "true", fields: DRIVE_FILE_FIELDS });
+  return driveFetch(`${DRIVE_UPLOAD_BASE}/files/${encodeURIComponent(fileId)}?${query}`, {
+    method: "PATCH",
+    headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
+    body,
+  });
+}
+
+async function noteFromDriveFile(file) {
+  let content = {};
+  try {
+    const blob = await fetchDriveBlob(file.id);
+    content = JSON.parse(await blob.text());
+  } catch {
+    content = {};
+  }
+  const attachmentRows = Array.isArray(content.attachments)
+    ? content.attachments
+    : (Array.isArray(content.attachmentIds) ? content.attachmentIds.map((id) => ({ id })) : []);
+  const attachments = attachmentRows.map((attachment) => ({
+    id: String(attachment.id || ""),
+    name: attachment.name || "附件",
+    sizeBytes: Number(attachment.sizeBytes || 0),
+    mimeType: attachment.mimeType || "application/octet-stream",
+    contentUrl: attachment.id ? `https://drive.google.com/open?id=${encodeURIComponent(attachment.id)}` : "#",
+  }));
+  const capabilities = file.capabilities || {};
+  return {
+    id: file.id,
+    title: content.title || file.name || "未命名備註",
+    content: content.content || "",
+    createdTime: file.createdTime,
+    modifiedTime: file.modifiedTime,
+    uploader: driveUploader(file),
+    attachments,
+    permissions: {
+      canEdit: Boolean(capabilities.canEdit),
+      canDelete: Boolean(capabilities.canTrash),
+    },
+  };
+}
+
+async function listNotes(pageSize = 25, pageToken = "") {
+  const result = await listManagedFiles("note", { pageSize, pageToken, status: "published" });
+  const notes = [];
+  for (let index = 0; index < (result.files || []).length; index += 4) {
+    const batch = (result.files || []).slice(index, index + 4);
+    const mapped = await Promise.all(batch.map(noteFromDriveFile));
+    notes.push(...mapped);
+  }
+  return { notes, nextPageToken: result.nextPageToken || null, canManage: true };
+}
+
+async function setAttachmentState(fileId, status, noteId = "") {
+  const metadata = await getDriveMetadata(fileId);
+  if (metadata.appProperties?.entity !== "noteAttachment") throw makeApiError("附件分類不正確", 422, "INVALID_ATTACHMENT");
+  const appProperties = { ...(metadata.appProperties || {}), status };
+  if (noteId) appProperties.noteId = noteId;
+  return patchDriveMetadata(fileId, { appProperties });
+}
+
+async function createNote(payload) {
+  const folderId = currentFolderId();
+  const title = String(payload.title || "").trim();
+  const content = String(payload.content || "").trim();
+  const noteId = String(payload.draftId || uid()).slice(0, 80);
+  if (!title || !content) throw makeApiError("備註標題與內容不能為空白", 400, "NOTE_REQUIRED");
+  const attachmentIds = [...new Set((payload.attachmentIds || []).map(String))].slice(0, 20);
+  const attachments = [];
+  for (const id of attachmentIds) {
+    const file = await getDriveMetadata(id);
+    attachments.push({ id: file.id, name: file.name, sizeBytes: Number(file.size || 0), mimeType: file.mimeType });
+  }
+  const json = new Blob([JSON.stringify({ schema: 1, title, content, attachmentIds, attachments })], { type: "application/json" });
+  const created = await multipartCreate({
+    name: title.slice(0, 200),
+    parents: [folderId],
+    mimeType: "application/json",
+    appProperties: {
+      appId: APP_ID,
+      schema: "1",
+      entity: "note",
+      status: "published",
+      noteId,
+      ...uploaderProperties(),
+    },
+  }, json);
+  await Promise.allSettled(attachmentIds.map((id) => setAttachmentState(id, "attached", noteId)));
+  return noteFromDriveFile(created);
+}
+
+async function updateNote(noteFileId, payload) {
+  const title = String(payload.title || "").trim();
+  const content = String(payload.content || "").trim();
+  if (!title || !content) throw makeApiError("備註標題與內容不能為空白", 400, "NOTE_REQUIRED");
+  const metadata = await getDriveMetadata(noteFileId);
+  const previousBlob = await fetchDriveBlob(noteFileId);
+  let previous = {};
+  try { previous = JSON.parse(await previousBlob.text()); } catch { previous = {}; }
+  const noteId = String(metadata.appProperties?.noteId || noteFileId).slice(0, 80);
+  const attachmentIds = [...new Set((payload.attachmentIds || []).map(String))].slice(0, 20);
+  const attachments = [];
+  for (const id of attachmentIds) {
+    const file = await getDriveMetadata(id);
+    attachments.push({ id: file.id, name: file.name, sizeBytes: Number(file.size || 0), mimeType: file.mimeType });
+  }
+  await Promise.allSettled(attachmentIds.map((id) => setAttachmentState(id, "attached", noteId)));
+  const previousIds = new Set((previous.attachmentIds || previous.attachments?.map((item) => item.id) || []).map(String));
+  const nextIds = new Set(attachmentIds);
+  const removed = [...previousIds].filter((id) => !nextIds.has(id));
+  await Promise.allSettled(removed.map((id) => patchDriveMetadata(id, { trashed: true })));
+  const json = new Blob([JSON.stringify({ schema: 1, title, content, attachmentIds, attachments })], { type: "application/json" });
+  const updated = await multipartUpdate(noteFileId, {
+    name: title.slice(0, 200),
+    mimeType: "application/json",
+    appProperties: metadata.appProperties || {},
+  }, json);
+  return noteFromDriveFile(updated);
+}
+
+async function storageCandidates(olderThanHours = 168) {
+  const threshold = Date.now() - Number(olderThanHours || 168) * 3600000;
+  const entities = [
+    ["file", "pending"],
+    ["photo", "pending"],
+    ["noteAttachment", "pending"],
+    ["noteAttachment", "ready"],
+  ];
+  const candidates = [];
+  for (const [entity, status] of entities) {
+    const result = await listManagedFiles(entity, { pageSize: 1000, status });
+    for (const file of result.files || []) {
+      if (new Date(file.createdTime).getTime() < threshold) candidates.push(file);
+    }
+  }
+  return {
+    candidates: candidates.map((file) => ({ id: file.id, name: file.name, sizeBytes: Number(file.size || 0) })),
+    totalBytes: candidates.reduce((sum, file) => sum + Number(file.size || 0), 0),
+  };
 }
 
 async function api(path, options = {}) {
-  if (DEMO_MODE) throw new Error("展示模式不會呼叫遠端 API");
-  const headers = new Headers(options.headers || {});
-  headers.set("Accept", "application/json");
-  headers.set("X-Requested-With", "DriveDock");
-  if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
+  const parsed = new URL(path, location.origin);
+  const pathname = parsed.pathname;
+  const method = String(options.method || "GET").toUpperCase();
+  let body = {};
+  if (typeof options.body === "string" && options.body) {
+    try { body = JSON.parse(options.body); } catch { body = {}; }
   }
-  const response = await fetch(apiUrl(path), {
-    ...options,
-    headers,
-    credentials: "include",
-  });
-  const type = response.headers.get("content-type") || "";
-  const payload = type.includes("application/json") ? await response.json() : null;
-  if (!response.ok && response.status !== 207) {
-    const error = new Error(payload?.error?.message || payload?.message || `API 回應 ${response.status}`);
-    error.code = payload?.error?.code || `HTTP_${response.status}`;
-    error.status = response.status;
-    error.retryable = Boolean(payload?.error?.retryable || response.status >= 500 || response.status === 429);
-    throw error;
+
+  if (pathname === "/api/config" && method === "GET") {
+    const settings = directSettings();
+    return {
+      apiReady: true,
+      driveConfigured: Boolean(settings.folderId),
+      googleClientId: settings.googleClientId,
+      folderName: settings.folderName,
+      setupRequired: !settings.folderId,
+      storageMode: "瀏覽器直接連線 Google Drive",
+      anonymousUploads: false,
+      publicDownloads: false,
+      ipDisplayMode: "none",
+      uploadChunkBytes: CONFIG.UPLOAD_CHUNK_BYTES,
+    };
   }
-  return payload?.data ?? payload ?? {};
+
+  if (pathname === "/api/admin/settings" && method === "GET") {
+    const settings = directSettings();
+    return {
+      revision: 1,
+      googleClientId: settings.googleClientId,
+      folderInput: settings.folderInput,
+      folderId: settings.folderId,
+      folderName: settings.folderName,
+      folderWebViewLink: safeDriveFolderLink("", settings.folderId),
+      setupRequired: !settings.folderId,
+      storageLocked: false,
+    };
+  }
+
+  if (pathname === "/api/admin/settings" && method === "PATCH") {
+    const googleClientId = normalizeGoogleClientId(body.googleClientId);
+    if (!isValidGoogleClientId(googleClientId)) throw makeApiError("Google Web Client ID 格式不正確", 400, "INVALID_CLIENT_ID");
+    const folder = await resolveDriveFolder(body.folderInput);
+    const next = saveDirectSettings({
+      googleClientId,
+      folderInput: body.folderInput,
+      folderId: folder.id,
+      folderName: folder.name,
+    });
+    return {
+      revision: 1,
+      googleClientId: next.GOOGLE_CLIENT_ID,
+      folderInput: next.FOLDER_INPUT,
+      folderId: next.DRIVE_FOLDER_ID,
+      folderName: next.DRIVE_FOLDER_NAME,
+      folderWebViewLink: folder.webViewLink || safeDriveFolderLink("", folder.id),
+      setupRequired: false,
+      storageLocked: false,
+      folderCreated: false,
+      reloadRequired: false,
+    };
+  }
+
+  if (pathname === "/api/admin/storage" && method === "GET") return storageCandidates(168);
+  if (pathname === "/api/admin/storage/cleanup" && method === "POST") {
+    const result = await storageCandidates(Number(body.olderThanHours || 168));
+    const results = [];
+    for (const candidate of result.candidates) {
+      try {
+        await patchDriveMetadata(candidate.id, { trashed: true }, "id,trashed");
+        results.push({ id: candidate.id, success: true });
+      } catch (error) {
+        results.push({ id: candidate.id, success: false, message: error.message });
+      }
+    }
+    return { results };
+  }
+
+  if (pathname === "/api/files" && method === "GET") {
+    const kind = parsed.searchParams.get("kind") || "file";
+    const result = await listManagedFiles(kind, {
+      pageSize: parsed.searchParams.get("pageSize") || 100,
+      pageToken: parsed.searchParams.get("pageToken") || "",
+      status: "ready",
+    });
+    return {
+      files: (result.files || []).map((file) => publicDriveRecord(file, kind)),
+      nextPageToken: result.nextPageToken || null,
+      canManage: true,
+    };
+  }
+
+  const fileMatch = pathname.match(/^\/api\/files\/([^/]+)$/);
+  if (fileMatch && method === "PATCH") {
+    const fileId = decodeURIComponent(fileMatch[1]);
+    const updated = await patchDriveMetadata(fileId, { name: String(body.name || "").slice(0, 200) });
+    return { file: publicDriveRecord(updated, updated.appProperties?.entity || "file") };
+  }
+
+  if (pathname === "/api/files/batch-trash" && method === "POST") {
+    const results = [];
+    for (const id of [...new Set((body.ids || []).map(String))].slice(0, 200)) {
+      try {
+        await patchDriveMetadata(id, { trashed: true }, "id,trashed");
+        results.push({ id, success: true });
+      } catch (error) {
+        results.push({ id, success: false, message: error.message });
+      }
+    }
+    return { results };
+  }
+
+  if (pathname === "/api/uploads/session" && method === "POST") {
+    return { session: await createResumableSession(body) };
+  }
+  const finalizeMatch = pathname.match(/^\/api\/uploads\/([^/]+)\/finalize$/);
+  if (finalizeMatch && method === "POST") {
+    return { file: await finalizeResumableSession(decodeURIComponent(finalizeMatch[1])) };
+  }
+
+  if (pathname === "/api/notes" && method === "GET") {
+    return listNotes(parsed.searchParams.get("pageSize") || 25, parsed.searchParams.get("pageToken") || "");
+  }
+  if (pathname === "/api/notes" && method === "POST") return { note: await createNote(body) };
+  const noteMatch = pathname.match(/^\/api\/notes\/([^/]+)$/);
+  if (noteMatch && method === "PATCH") return { note: await updateNote(decodeURIComponent(noteMatch[1]), body) };
+
+  throw makeApiError(`不支援的前端 API 路徑：${pathname}`, 404, "UNSUPPORTED_ROUTE");
 }
 
 async function apiAll(basePath, collectionKey, maxItems = 1000) {
@@ -231,79 +831,6 @@ async function apiAll(basePath, collectionKey, maxItems = 1000) {
   return { items: items.slice(0, maxItems), canManage };
 }
 
-const now = Date.now();
-const demoFiles = [
-  {
-    id: "demo-file-1",
-    name: "2026_品牌素材交付.zip",
-    mimeType: "application/zip",
-    sizeBytes: 84.62 * 1024 * 1024,
-    createdTime: new Date(now - 8 * 60 * 1000).toISOString(),
-    uploader: { type: "google", displayName: "林怡君" },
-  },
-  {
-    id: "demo-file-2",
-    name: "產品需求確認表.xlsx",
-    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    sizeBytes: 3.18 * 1024 * 1024,
-    createdTime: new Date(now - 76 * 60 * 1000).toISOString(),
-    uploader: { type: "anonymous", displayName: "訪客", ipLabel: "203.66.•••.•••" },
-  },
-  {
-    id: "demo-file-3",
-    name: "app-flow-v4.pdf",
-    mimeType: "application/pdf",
-    sizeBytes: 18.74 * 1024 * 1024,
-    createdTime: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
-    uploader: { type: "google", displayName: "王小明" },
-  },
-  {
-    id: "demo-file-4",
-    name: "release-notes.txt",
-    mimeType: "text/plain",
-    sizeBytes: 0.08 * 1024 * 1024,
-    createdTime: new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString(),
-    uploader: { type: "anonymous", displayName: "訪客", ipLabel: "114.32.•••.•••" },
-  },
-].map((file) =>
-  normalizeRecord({ ...file, kind: "file", permissions: { canRename: true, canDelete: true } }),
-);
-
-const demoPhotos = [
-  normalizeRecord({
-    id: "demo-photo-1",
-    name: "DriveDock-app-icon.png",
-    kind: "photo",
-    mimeType: "image/png",
-    sizeBytes: 2.46 * 1024 * 1024,
-    createdTime: new Date(now - 34 * 60 * 1000).toISOString(),
-    uploader: { type: "google", displayName: "設計團隊" },
-    thumbnailUrl: "./icon-512.png",
-    contentUrl: "./icon-512.png",
-    permissions: { canRename: true, canDelete: true, canCopy: true },
-  }),
-];
-
-const demoNotes = [
-  {
-    id: "demo-note-1",
-    title: "手機版驗收重點",
-    content: "請在 360px 寬度確認底部導覽、上傳視窗與相片雙欄縮圖。",
-    createdTime: new Date(now - 45 * 60 * 1000).toISOString(),
-    uploader: { type: "google", displayName: "林怡君" },
-    attachments: [{ id: "a1", name: "mobile-checklist.pdf", sizeBytes: 1.2 * 1024 * 1024, contentUrl: "#" }],
-    permissions: { canEdit: true, canDelete: true },
-  },
-  {
-    id: "demo-note-2",
-    title: "Cloud Run 環境變數待補",
-    content: "上線前設定 Shared Drive ID、資料夾 ID 與管理者 Google sub。",
-    createdTime: new Date(now - 20 * 60 * 60 * 1000).toISOString(),
-    uploader: { type: "anonymous", displayName: "訪客", ipLabel: "61.219.•••.•••" },
-    attachments: [],
-    permissions: { canEdit: true, canDelete: true },
-  },
-];
 
 const FILE_COLUMNS = {
   name: { label: "檔案名稱", sortable: true },
@@ -313,18 +840,22 @@ const FILE_COLUMNS = {
   createdTime: { label: "上傳時間", sortable: true },
 };
 const DEFAULT_COLUMN_ORDER = ["name", "uploader", "sizeBytes", "extension", "createdTime"];
-const DEFAULT_SETTING_ORDER = ["connection", "drive", "upload", "auth", "privacy", "appearance", "version"];
+const DEFAULT_SETTING_ORDER = ["drive", "upload", "auth", "privacy", "appearance", "version"];
 
 const state = {
   route: "files",
   user: null,
-  canManage: DEMO_MODE,
-  files: DEMO_MODE ? [...demoFiles] : [],
-  photos: DEMO_MODE ? [...demoPhotos] : [],
-  notes: DEMO_MODE ? [...demoNotes] : [],
-  filesLoaded: DEMO_MODE,
-  photosLoaded: DEMO_MODE,
-  notesLoaded: DEMO_MODE,
+  canManage: false,
+  accessToken: "",
+  tokenExpiresAt: 0,
+  tokenClient: null,
+  tokenClientId: "",
+  files: [],
+  photos: [],
+  notes: [],
+  filesLoaded: false,
+  photosLoaded: false,
+  notesLoaded: false,
   selectedFiles: new Set(),
   selectedPhotos: new Set(),
   sort: readLocalJson("drivedock_file_sort", { key: "createdTime", direction: "desc" }),
@@ -349,6 +880,8 @@ const state = {
   adminSettings: null,
   googleClientId: CONFIG.GOOGLE_CLIENT_ID,
   googleSignInClientId: "",
+  pendingFolderInput: "",
+  photoObjectUrl: "",
   googleSetupBusy: false,
   googleSetupDirty: false,
   googleSetupFeedback: null,
@@ -597,10 +1130,11 @@ function updateOnlineStatus() {
   dot.classList.toggle("is-offline", !online);
   $("#connection-label").textContent = online ? "網路連線正常" : "離線模式";
   if (!online) setSyncStatus("離線，暫停上傳", "offline");
-  else if (DEMO_MODE) setSyncStatus("展示模式", "online");
-  else if (state.apiConfig) setSyncStatus("Drive 已連線", "online");
-  $("#scan-storage").disabled = !state.canManage || !online;
-  $("#cleanup-storage").disabled = !state.canManage || !online;
+  else if (!hasDriveSession()) setSyncStatus("請登入 Google", "offline");
+  else if (!currentFolderId()) setSyncStatus("請設定 Drive 資料夾", "checking");
+  else setSyncStatus("Drive 已連線", "online");
+  $("#scan-storage").disabled = !hasDriveSession() || !currentFolderId() || !online;
+  $("#cleanup-storage").disabled = !hasDriveSession() || !currentFolderId() || !online;
   renderGoogleSetup();
 }
 
@@ -638,137 +1172,155 @@ function renderAccount() {
     image.referrerPolicy = "no-referrer";
     avatar.append(image);
   } else {
-    avatar.textContent = initials(user?.name || (DEMO_MODE ? "展" : "?"));
+    avatar.textContent = initials(user?.name || "?");
   }
-  $("#account-name").textContent = user?.name || (DEMO_MODE ? "展示模式" : "Google 帳戶");
-  $("#account-status").textContent = user
-    ? state.canManage
-      ? "管理員已登入"
-      : "Google 已登入"
-    : DEMO_MODE
-      ? "本機互動預覽"
-      : "尚未登入";
-  $("#google-signin").hidden = Boolean(user) || DEMO_MODE;
+  $("#account-name").textContent = user?.name || "Google 帳戶";
+  $("#account-status").textContent = user ? "Drive 已授權" : state.googleClientId ? "點此連接 Google" : "尚未設定 Client ID";
+  $("#google-signin").hidden = Boolean(user);
   $("#google-signout").hidden = !user;
-  $("#auth-setting-state").textContent = user ? (state.canManage ? "管理員" : "已登入") : "未登入";
-  $("#scan-storage").disabled = !state.canManage || !navigator.onLine;
-  $("#cleanup-storage").disabled = !state.canManage || !navigator.onLine;
+  $("#auth-setting-state").textContent = user ? "已授權" : "未登入";
+  $("#scan-storage").disabled = !hasDriveSession() || !currentFolderId() || !navigator.onLine;
+  $("#cleanup-storage").disabled = !hasDriveSession() || !currentFolderId() || !navigator.onLine;
   renderGoogleSetup();
 }
 
 async function restoreSession() {
-  if (DEMO_MODE) {
-    renderAccount();
-    return;
-  }
-  try {
-    const session = await api("/api/auth/session");
-    state.user = session.authenticated ? session.user : null;
-    state.canManage = Boolean(session.role === "admin" || session.canManage);
-    if (state.user) localStorage.setItem("drivedock_profile_hint", JSON.stringify({ name: state.user.name }));
-    else localStorage.removeItem("drivedock_profile_hint");
-    renderAccount();
-  } catch (error) {
-    state.user = null;
-    state.canManage = false;
-    renderAccount();
-    showToast(`登入狀態確認失敗：${error.message}`, "error");
-  }
+  state.user = null;
+  state.canManage = false;
+  state.accessToken = "";
+  state.tokenExpiresAt = 0;
+  renderAccount();
 }
 
-async function handleGoogleCredential(response) {
-  try {
-    const clientId = normalizeGoogleClientId(state.googleClientId || CONFIG.GOOGLE_CLIENT_ID);
-    if (!clientId) throw new Error("尚未設定 Google Web Client ID");
-    const session = await api("/api/auth/google", {
-      method: "POST",
-      body: JSON.stringify({ credential: response.credential, clientId }),
-    });
-    state.user = session.user;
-    state.canManage = session.role === "admin" || Boolean(session.canManage);
-    localStorage.setItem("drivedock_profile_hint", JSON.stringify({ name: state.user?.name || "Google 使用者" }));
-    renderAccount();
-    closeAccountMenu();
-    showToast(`歡迎回來，${state.user?.name || "Google 使用者"}`);
-    await Promise.all([
-      loadFiles(true),
-      loadPhotos(true),
-      loadNotes(true),
-      state.canManage ? loadAdminSettings() : Promise.resolve(),
-    ]);
-    renderSettings();
-  } catch (error) {
-    showToast(`Google 登入失敗：${error.message}`, "error");
+async function finishGoogleAuthorization(response) {
+  if (!response?.access_token) {
+    throw makeApiError(response?.error_description || response?.error || "Google 未回傳存取權杖", 401, "TOKEN_FAILED");
   }
+  state.accessToken = response.access_token;
+  state.tokenExpiresAt = Date.now() + Math.max(60, Number(response.expires_in || 3600)) * 1000;
+  localStorage.setItem("drivedock_oauth_granted", "1");
+
+  const userResponse = await fetch(GOOGLE_USERINFO_URL, {
+    headers: { Authorization: `Bearer ${state.accessToken}` },
+    cache: "no-store",
+  });
+  if (!userResponse.ok) throw await parseGoogleError(userResponse);
+  const profile = await userResponse.json();
+  state.user = {
+    id: String(profile.sub || profile.id || profile.email || ""),
+    name: profile.name || profile.email || "Google 使用者",
+    email: profile.email || "",
+    picture: profile.picture || "",
+  };
+  state.canManage = true;
+  localStorage.setItem("drivedock_profile_hint", JSON.stringify({ name: state.user.name }));
+  renderAccount();
+  closeAccountMenu();
+  setSyncStatus("Google Drive 已授權", "online");
+
+  const settings = directSettings();
+  if (settings.folderInput && (!settings.folderId || state.pendingFolderInput)) {
+    try {
+      const result = await api("/api/admin/settings", {
+        method: "PATCH",
+        body: JSON.stringify({
+          googleClientId: state.googleClientId,
+          folderInput: state.pendingFolderInput || settings.folderInput,
+        }),
+      });
+      state.adminSettings = normalizeAdminSettings(result);
+      state.apiConfig = {
+        ...(state.apiConfig || {}),
+        googleClientId: result.googleClientId,
+        folderName: result.folderName,
+        driveConfigured: true,
+        setupRequired: false,
+      };
+      state.pendingFolderInput = "";
+      state.googleSetupDirty = false;
+      setGoogleSetupFeedback("success", "已連接");
+    } catch (error) {
+      setGoogleSetupFeedback("error", "資料夾驗證失敗");
+      showToast(`Google 已登入，但資料夾無法使用：${error.message}`, "error");
+    }
+  }
+
+  state.filesLoaded = false;
+  state.photosLoaded = false;
+  state.notesLoaded = false;
+  await Promise.all([loadFiles(true), loadPhotos(true), loadNotes(true)]);
+  renderSettings();
+  showToast(`已連接 ${state.user.name} 的 Google Drive`);
 }
 
 function initializeGoogleSignIn(attempt = 0, force = false) {
-  const clientId = normalizeGoogleClientId(state.googleClientId || CONFIG.GOOGLE_CLIENT_ID);
-  if (DEMO_MODE || !clientId) return;
-  if (!globalThis.google?.accounts?.id) {
-    if (attempt < 40) setTimeout(() => initializeGoogleSignIn(attempt + 1, force), 250);
+  const clientId = normalizeGoogleClientId(state.googleClientId || directSettings().googleClientId || CONFIG.GOOGLE_CLIENT_ID);
+  if (!clientId || !isValidGoogleClientId(clientId)) return;
+  if (!globalThis.google?.accounts?.oauth2) {
+    if (attempt < 60) setTimeout(() => initializeGoogleSignIn(attempt + 1, force), 250);
     return;
   }
-  if (!force && state.googleSignInClientId === clientId) return;
-  google.accounts.id.initialize({
+  if (!force && state.tokenClient && state.tokenClientId === clientId) return;
+  state.tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: clientId,
-    callback: handleGoogleCredential,
-    auto_select: true,
-    cancel_on_tap_outside: false,
-    use_fedcm_for_prompt: true,
+    scope: GOOGLE_OAUTH_SCOPE,
+    callback: (response) => {
+      void finishGoogleAuthorization(response).catch((error) => {
+        showToast(`Google 授權失敗：${error.message}`, "error");
+        renderAccount();
+      });
+    },
+    error_callback: (error) => {
+      showToast(`Google 授權視窗失敗：${error?.message || error?.type || "請確認 OAuth 網域設定"}`, "error");
+    },
   });
-  const host = $("#google-button-host");
-  host.replaceChildren();
-  host.hidden = false;
-  $("#account-menu").prepend(host);
-  google.accounts.id.renderButton(host, {
-    type: "standard",
-    theme: document.documentElement.dataset.theme === "dark" ? "filled_black" : "outline",
-    size: "large",
-    width: 194,
-    text: "signin_with",
-    shape: "rectangular",
-  });
+  state.tokenClientId = clientId;
   state.googleSignInClientId = clientId;
-  $("#google-signin").hidden = true;
-  if (!state.user) google.accounts.id.prompt();
+  renderAccount();
 }
 
-function requestGoogleSignIn() {
-  const clientId = normalizeGoogleClientId(state.googleClientId || CONFIG.GOOGLE_CLIENT_ID);
-  if (DEMO_MODE || !clientId) {
+function requestGoogleSignIn({ forceConsent = false } = {}) {
+  const clientId = normalizeGoogleClientId(state.googleClientId || directSettings().googleClientId || CONFIG.GOOGLE_CLIENT_ID);
+  if (!isValidGoogleClientId(clientId)) {
     location.hash = "#settings";
-    showToast("請先在設定頁套用有效的 Google Web Client ID", "error");
+    showToast("請先填入有效的 Google OAuth Web Client ID", "error");
     return;
   }
-  if (!globalThis.google?.accounts?.id) {
-    showToast("Google 登入服務尚未載入，請稍後重試", "error");
+  initializeGoogleSignIn(0, true);
+  if (!state.tokenClient) {
+    showToast("Google 授權服務尚未載入，請稍後重試", "error");
     return;
   }
-  google.accounts.id.prompt((notification) => {
-    if (notification.isNotDisplayed?.() || notification.isSkippedMoment?.()) {
-      showToast("請使用帳戶選單中的 Google 登入按鈕", "error");
-    }
-  });
+  const hasGrantedBefore = localStorage.getItem("drivedock_oauth_granted") === "1";
+  state.tokenClient.requestAccessToken({ prompt: forceConsent || !hasGrantedBefore ? "consent" : "" });
 }
 
 async function signOut() {
-  try {
-    if (!DEMO_MODE) await api("/api/auth/logout", { method: "POST", body: "{}" });
-    globalThis.google?.accounts?.id?.disableAutoSelect?.();
-    state.user = null;
-    state.canManage = DEMO_MODE;
-    state.adminSettings = null;
-    state.googleSetupDirty = false;
-    localStorage.removeItem("drivedock_profile_hint");
-    renderAccount();
-    renderSettings();
-    closeAccountMenu();
-    showToast("已從此裝置登出");
-    await Promise.all([loadFiles(true), loadPhotos(true), loadNotes(true)]);
-  } catch (error) {
-    showToast(`登出失敗：${error.message}`, "error");
+  const token = state.accessToken;
+  if (token && globalThis.google?.accounts?.oauth2?.revoke) {
+    await new Promise((resolve) => google.accounts.oauth2.revoke(token, resolve));
   }
+  if (state.photoObjectUrl) URL.revokeObjectURL(state.photoObjectUrl);
+  state.photoObjectUrl = "";
+  state.accessToken = "";
+  state.tokenExpiresAt = 0;
+  state.user = null;
+  state.canManage = false;
+  state.files = [];
+  state.photos = [];
+  state.notes = [];
+  state.filesLoaded = false;
+  state.photosLoaded = false;
+  state.notesLoaded = false;
+  localStorage.removeItem("drivedock_profile_hint");
+  renderAccount();
+  renderFiles();
+  renderPhotos();
+  renderNotes();
+  renderSettings();
+  closeAccountMenu();
+  setSyncStatus("請登入 Google", "offline");
+  showToast("已撤銷此裝置的 Google Drive 授權");
 }
 
 function toggleAccountMenu() {
@@ -1030,14 +1582,18 @@ function renderFiles() {
   $("#file-table").hidden = records.length === 0;
   $("#selected-file-count").textContent = String(state.selectedFiles.size);
   $("#delete-files").disabled = state.selectedFiles.size === 0 || !state.canManage || !navigator.onLine;
-  $("#file-permission-note").lastElementChild.textContent = state.canManage
-    ? "您是 API 管理員，可重新命名並將已選檔案移到 Drive 垃圾桶。"
-    : "只有檔案上傳者可重新命名；批次刪除只開放 API 管理員，Drive 擁有者仍可在 Drive 管理。";
+  $("#file-permission-note").lastElementChild.textContent = hasDriveSession()
+    ? "重新命名與刪除權限依目前登入帳戶在 Google Drive 的實際權限決定。"
+    : "請先登入 Google，才能讀取與管理指定資料夾。";
 }
 
 async function loadFiles(force = false) {
-  if (DEMO_MODE) {
+  if (!hasDriveSession() || !currentFolderId()) {
+    state.files = [];
+    state.filesLoaded = false;
+    state.selectedFiles.clear();
     renderFiles();
+    setSyncStatus(hasDriveSession() ? "請設定 Drive 資料夾" : "請登入 Google", hasDriveSession() ? "checking" : "offline");
     return;
   }
   if (state.filesLoaded && !force) {
@@ -1231,8 +1787,12 @@ function renderPhotos() {
 }
 
 async function loadPhotos(force = false) {
-  if (DEMO_MODE) {
+  if (!hasDriveSession() || !currentFolderId()) {
+    state.photos = [];
+    state.photosLoaded = false;
+    state.selectedPhotos.clear();
     renderPhotos();
+    setSyncStatus(hasDriveSession() ? "請設定 Drive 資料夾" : "請登入 Google", hasDriveSession() ? "checking" : "offline");
     return;
   }
   if (state.photosLoaded && !force) {
@@ -1261,12 +1821,24 @@ function openPhotoViewer(photo) {
   $("#photo-viewer-title").textContent = photo.name;
   $("#photo-viewer-meta").textContent = `${formatDate(photo.createdTime)} · ${formatBytes(photo.sizeBytes)} · ${uploaderLabel(photo)}`;
   const image = $("#photo-viewer-image");
-  image.src = photo.contentUrl || photo.thumbnailUrl;
+  if (state.photoObjectUrl) URL.revokeObjectURL(state.photoObjectUrl);
+  state.photoObjectUrl = "";
+  image.src = photo.thumbnailUrl || "./icon-512.png";
   image.alt = photo.name;
   const copyButton = $("#copy-photo");
   copyButton.disabled = Boolean(state.copyingPhotoId);
   copyButton.dataset.mobileLabel = state.copyingPhotoId ? "處理中" : "複製";
   openModal("photo-viewer", copyButton);
+  void fetchDriveBlob(photo.id)
+    .then((blob) => {
+      if (state.viewerPhoto?.id !== photo.id) return;
+      state.photoObjectUrl = URL.createObjectURL(blob);
+      image.src = state.photoObjectUrl;
+    })
+    .catch((error) => {
+      console.warn("DriveDock preview failed", error);
+      showToast(`無法載入完整圖片：${error.message}`, "error");
+    });
 }
 
 function appendUrlParameter(value, key, parameterValue) {
@@ -1281,17 +1853,7 @@ function appendUrlParameter(value, key, parameterValue) {
 }
 
 function photoCopySources(photo) {
-  const sources = [];
-  const add = (value) => {
-    if (!value || sources.includes(value)) return;
-    sources.push(value);
-  };
-  if (!String(photo.id).startsWith("demo-")) {
-    add(appendUrlParameter(apiUrl(`/api/files/${encodeURIComponent(photo.id)}/content`), "inline", "1"));
-  }
-  add(photo.contentUrl);
-  add(photo.thumbnailUrl);
-  return sources;
+  return [photo.thumbnailUrl].filter(Boolean);
 }
 
 async function imageBlobToPng(blob) {
@@ -1341,25 +1903,11 @@ async function imageBlobToPng(blob) {
 }
 
 async function fetchPhotoAsPng(photo) {
-  let lastError = new Error("找不到可用的圖片來源");
-  for (const source of photoCopySources(photo)) {
-    try {
-      const response = await fetch(source, {
-        credentials: "include",
-        cache: "no-store",
-        headers: { Accept: "image/png,image/*;q=0.9,*/*;q=0.1" },
-      });
-      if (!response.ok) throw new Error(`圖片回應 ${response.status}`);
-      const blob = await response.blob();
-      if (!blob.type.startsWith("image/")) {
-        throw new Error(`伺服器回傳的內容不是圖片（${blob.type || "未知格式"}）`);
-      }
-      return await imageBlobToPng(blob);
-    } catch (error) {
-      lastError = error;
-    }
+  const blob = await fetchDriveBlob(photo.id);
+  if (!blob.type.startsWith("image/")) {
+    throw new Error(`Google Drive 回傳的內容不是圖片（${blob.type || "未知格式"}）`);
   }
-  throw lastError;
+  return imageBlobToPng(blob);
 }
 
 function setPhotoCopyBusy(photo, busy) {
@@ -1466,7 +2014,7 @@ function normalizeNote(raw) {
       id: String(attachment.id || uid()),
       name: attachment.name || "附件",
       sizeBytes: Number(attachment.sizeBytes ?? attachment.size ?? 0),
-      contentUrl: attachment.contentUrl || apiUrl(`/api/files/${encodeURIComponent(attachment.id)}/content`),
+      contentUrl: attachment.contentUrl || `https://drive.google.com/open?id=${encodeURIComponent(attachment.id)}`,
     })),
     permissions: {
       canEdit: Boolean(raw.permissions?.canEdit ?? raw.canEdit),
@@ -1534,9 +2082,11 @@ function renderNotes() {
 }
 
 async function loadNotes(force = false) {
-  if (DEMO_MODE) {
-    state.notes = state.notes.map(normalizeNote);
+  if (!hasDriveSession() || !currentFolderId()) {
+    state.notes = [];
+    state.notesLoaded = false;
     renderNotes();
+    setSyncStatus(hasDriveSession() ? "請設定 Drive 資料夾" : "請登入 Google", hasDriveSession() ? "checking" : "offline");
     return;
   }
   if (state.notesLoaded && !force) {
@@ -1560,6 +2110,11 @@ async function loadNotes(force = false) {
 }
 
 function openNoteModal(note = null, readOnly = false) {
+  if (!note && (!hasDriveSession() || !currentFolderId())) {
+    location.hash = "#settings";
+    showToast(hasDriveSession() ? "請先設定 Google Drive 資料夾" : "請先登入 Google", "error");
+    return;
+  }
   state.noteAttachments = [];
   state.noteExistingAttachments = note ? [...note.attachments] : [];
   $("#note-id").value = note?.id || "";
@@ -1634,6 +2189,10 @@ function addNoteAttachments(fileList) {
 
 async function handleNoteSubmit(event) {
   event.preventDefault();
+  if (!hasDriveSession() || !currentFolderId()) {
+    showToast(hasDriveSession() ? "請先設定 Google Drive 資料夾" : "請先登入 Google", "error");
+    return;
+  }
   const id = $("#note-id").value;
   const title = $("#note-title-input").value.trim();
   const content = $("#note-content-input").value.trim();
@@ -1718,6 +2277,11 @@ async function handleNoteSubmit(event) {
 
 function openUpload(kind = "file", initialFiles = []) {
   if (state.upload.active) return;
+  if (!hasDriveSession() || !currentFolderId()) {
+    location.hash = "#settings";
+    showToast(hasDriveSession() ? "請先設定 Google Drive 資料夾" : "請先登入 Google", "error");
+    return;
+  }
   state.upload.kind = kind;
   state.upload.queue = [];
   state.upload.transferredBytes = 0;
@@ -1840,6 +2404,7 @@ function xhrPutChunk(uploadUrl, blob, start, total, onProgress) {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl);
     xhr.timeout = 5 * 60 * 1000;
+    xhr.setRequestHeader("Authorization", `Bearer ${state.accessToken}`);
     xhr.responseType = "json";
     xhr.setRequestHeader("Content-Type", blob.type || "application/octet-stream");
     xhr.setRequestHeader("Content-Range", `bytes ${start}-${start + blob.size - 1}/${total}`);
@@ -1872,6 +2437,7 @@ function queryUploadOffset(uploadUrl, total) {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl);
     xhr.timeout = 30 * 1000;
+    xhr.setRequestHeader("Authorization", `Bearer ${state.accessToken}`);
     xhr.setRequestHeader("Content-Range", `bytes */${total}`);
     xhr.onload = () => {
       if (xhr.status === 308) {
@@ -2037,10 +2603,10 @@ async function startUpload() {
   setSyncStatus("上傳完成", "online");
   renderUploadQueue();
   if (state.upload.kind === "photo") {
-    state.photosLoaded = DEMO_MODE;
+    state.photosLoaded = false;
     void loadPhotos(true);
   } else {
-    state.filesLoaded = DEMO_MODE;
+    state.filesLoaded = false;
     void loadFiles(true);
   }
   for (let seconds = 5; seconds >= 1; seconds -= 1) {
@@ -2062,7 +2628,6 @@ function preventUploadExit(event) {
 }
 
 const SETTING_LABELS = {
-  connection: "前端連線",
   drive: "Drive API",
   upload: "上傳規則",
   auth: "帳戶登入",
@@ -2163,16 +2728,16 @@ function makeStatusRow(label, value) {
 }
 
 function normalizeAdminSettings(raw = {}) {
-  const revision = raw.revision === null || raw.revision === undefined ? null : Number(raw.revision);
   return {
-    revision: Number.isFinite(revision) ? revision : null,
+    revision: 1,
     googleClientId: normalizeGoogleClientId(raw.googleClientId),
+    folderInput: normalizeFolderInput(raw.folderInput || raw.folderId || raw.folderName),
     folderId: String(raw.folderId || "").trim(),
     folderName: String(raw.folderName || "").trim(),
     folderWebViewLink: String(raw.folderWebViewLink || "").trim(),
     driveId: String(raw.driveId || "").trim(),
     setupRequired: Boolean(raw.setupRequired),
-    storageLocked: Boolean(raw.storageLocked),
+    storageLocked: false,
   };
 }
 
@@ -2198,34 +2763,18 @@ function validateGoogleSetup({ requireFolder = true } = {}) {
   let firstInvalid = null;
 
   if (!isValidGoogleClientId(googleClientId)) {
-    setSetupFieldError(clientInput, $("#setup-client-id-error"), "請輸入有效的 Google Web Client ID（結尾必須是 .apps.googleusercontent.com）。");
+    setSetupFieldError(clientInput, $("#setup-client-id-error"), "請輸入完整的 Google OAuth Web Client ID（結尾為 .apps.googleusercontent.com）。");
     firstInvalid = clientInput;
   }
-
-  if (requireFolder) {
-    let folderError = "";
-    if (!folderInput) {
-      folderError = "請輸入資料夾名稱、Google Drive 資料夾網址或 ID。";
-    } else if (/^https?:\/\//i.test(folderInput)) {
-      try {
-        const url = new URL(folderInput);
-        const isDriveHost = url.hostname.toLowerCase() === "drive.google.com";
-        const hasFolderId = /\/folders\/[a-z0-9_-]{10,}/i.test(url.pathname) || /^[a-z0-9_-]{10,}$/i.test(url.searchParams.get("id") || "");
-        if (url.protocol !== "https:" || !isDriveHost || !hasFolderId) {
-          folderError = "請貼上有效的 HTTPS Google Drive 資料夾網址。";
-        }
-      } catch {
-        folderError = "資料夾網址格式不正確。";
-      }
-    } else if (!/^[a-z0-9_-]{20,200}$/i.test(folderInput) && /[\p{Cc}\\/]/u.test(folderInput)) {
-      folderError = "資料夾名稱不可包含斜線或控制字元。";
-    } else if (!/^[a-z0-9_-]{20,200}$/i.test(folderInput) && folderInput.length > 200) {
-      folderError = "資料夾名稱不可超過 200 個字元。";
-    }
-    if (folderError) {
-      setSetupFieldError(folderInputNode, $("#setup-folder-error"), folderError);
-      firstInvalid ||= folderInputNode;
-    }
+  if (requireFolder && !folderInput) {
+    setSetupFieldError(folderInputNode, $("#setup-folder-error"), "請輸入 Google Drive Folder ID、資料夾網址或名稱。");
+    firstInvalid ||= folderInputNode;
+  } else if (requireFolder && /^https?:\/\//i.test(folderInput) && !extractFolderId(folderInput)) {
+    setSetupFieldError(folderInputNode, $("#setup-folder-error"), "請貼上有效的 Google Drive 資料夾網址。");
+    firstInvalid ||= folderInputNode;
+  } else if (requireFolder && !extractFolderId(folderInput) && (/[\p{Cc}\\/]/u.test(folderInput) || folderInput.length > 200)) {
+    setSetupFieldError(folderInputNode, $("#setup-folder-error"), "資料夾名稱格式不正確。");
+    firstInvalid ||= folderInputNode;
   }
 
   firstInvalid?.focus();
@@ -2240,86 +2789,67 @@ function setGoogleSetupFeedback(stateName, label) {
   badge.textContent = label;
 }
 
-function clearPublishedBootstrapClientId() {
-  const current = readLocalJson("drivedock_connection", {});
-  if (!current.GOOGLE_CLIENT_ID) return;
-  const next = {};
-  if (current.API_BASE_URL) next.API_BASE_URL = String(current.API_BASE_URL).replace(/\/$/, "");
-  if (Object.keys(next).length) localStorage.setItem("drivedock_connection", JSON.stringify(next));
-  else localStorage.removeItem("drivedock_connection");
-}
-
 function renderGoogleSetup() {
   const card = $("#google-setup-card");
   if (!card) return;
-  const publicConfig = state.apiConfig || {};
-  const adminSettings = state.adminSettings || {};
-  const publishedClientId = normalizeGoogleClientId(publicConfig.googleClientId);
-  const clientId = normalizeGoogleClientId(adminSettings.googleClientId || publishedClientId || state.googleClientId || CONFIG.GOOGLE_CLIENT_ID);
-  const folderName = String(adminSettings.folderName || publicConfig.folderName || "").trim();
-  const folderId = String(adminSettings.folderId || "").trim();
-  const configured = Boolean(adminSettings.folderId || publicConfig.driveConfigured || (folderName && publicConfig.setupRequired === false));
-  const setupRequired = Boolean(adminSettings.setupRequired ?? publicConfig.setupRequired ?? !configured);
-  const online = navigator.onLine;
-  const canEdit = Boolean(state.canManage && !DEMO_MODE);
-  const canBootstrap = Boolean(!DEMO_MODE && !state.user && !publishedClientId);
+  const settings = state.adminSettings || normalizeAdminSettings({
+    googleClientId: directSettings().googleClientId,
+    folderInput: directSettings().folderInput,
+    folderId: directSettings().folderId,
+    folderName: directSettings().folderName,
+    setupRequired: !directSettings().folderId,
+  });
   const clientInput = $("#setup-client-id");
   const folderInput = $("#setup-folder-input");
   const saveButton = $("#save-google-setup");
-  const bootstrapButton = $("#bootstrap-google-login");
+  const loginButton = $("#bootstrap-google-login");
   const adminNote = $("#setup-admin-note");
+  const online = navigator.onLine;
 
   $("#google-setup-form").setAttribute("aria-busy", String(state.googleSetupBusy));
-  card.classList.toggle("is-admin", canEdit);
-  card.classList.toggle("is-readonly", !canEdit);
-  clientInput.disabled = state.googleSetupBusy || !(canEdit || canBootstrap);
-  folderInput.disabled = state.googleSetupBusy || !canEdit || Boolean(adminSettings.storageLocked);
-  saveButton.disabled = state.googleSetupBusy || !canEdit || !online;
-  bootstrapButton.hidden = !canBootstrap;
-  bootstrapButton.disabled = state.googleSetupBusy || !online;
+  card.classList.toggle("is-admin", Boolean(state.user));
+  card.classList.remove("is-readonly");
+  clientInput.disabled = state.googleSetupBusy;
+  folderInput.disabled = state.googleSetupBusy;
+  saveButton.disabled = state.googleSetupBusy || !state.user || !online;
+  loginButton.hidden = Boolean(state.user);
+  loginButton.disabled = state.googleSetupBusy || !online;
+  loginButton.textContent = "儲存設定並登入";
+  saveButton.textContent = "驗證並儲存";
 
-  if (!state.googleSetupDirty || clientInput.disabled) {
-    clientInput.value = clientId;
-    folderInput.value = folderName;
+  if (!state.googleSetupDirty) {
+    clientInput.value = settings.googleClientId || state.googleClientId || "";
+    folderInput.value = settings.folderInput || settings.folderId || settings.folderName || "";
   }
 
-  if (DEMO_MODE) {
-    adminNote.textContent = "目前是本機展示模式；請先在「前端連線」填入 API 網址，再進行全站設定。";
-  } else if (adminSettings.storageLocked) {
-    adminNote.textContent = "目前資料夾已有 DriveDock 資料，因此不能直接換綁；您仍可更新 Web Client ID，資料夾遷移需由伺服器端另行處理。";
-  } else if (canEdit) {
-    adminNote.textContent = "您以管理員身分編輯全站設定；儲存後，所有手機與電腦都會使用同一個 Drive 資料夾。";
-  } else if (canBootstrap) {
-    adminNote.textContent = "首次設定：先輸入公開的 Web Client ID，套用並登入管理員帳戶；登入後即可指定共用資料夾。";
-  } else if (state.user) {
-    adminNote.textContent = "目前登入帳戶不是 API 管理員，因此只能查看全站共用設定，不能變更。";
+  if (!online) {
+    adminNote.textContent = "目前離線；恢復網路後才能登入及驗證 Google Drive 資料夾。";
+  } else if (!state.user) {
+    adminNote.textContent = "請填入 Client ID 與 Folder ID／資料夾網址，再按「儲存設定並登入」。存取權杖只保留在記憶體，不會寫入檔案或 localStorage。";
+  } else if (!settings.folderId) {
+    adminNote.textContent = "Google 已授權。請按「驗證並儲存」，確認目前帳戶可讀寫此資料夾。";
   } else {
-    adminNote.textContent = "請先使用管理員 Google 帳戶登入；一般使用者只能查看共用資料夾狀態。";
+    adminNote.textContent = `目前由 ${state.user.name} 直接連線 Google Drive；不需要 API 基礎網址或 Cloud Run。`;
   }
 
-  $("#setup-folder-result").textContent = folderName || (setupRequired ? "尚未設定" : "已連接 Google Drive");
-  $("#setup-folder-id").textContent = folderId
-    ? `資料夾 ID：${maskDriveId(folderId)}`
-    : configured
-      ? "所有裝置共用此資料夾；完整 ID 僅對管理員顯示。"
-      : "名稱不存在時會建立資料夾；若有同名資料夾，請貼網址或 ID。";
+  $("#setup-folder-result").textContent = settings.folderName || (settings.folderId ? "已設定 Google Drive 資料夾" : "尚未設定");
+  $("#setup-folder-id").textContent = settings.folderId
+    ? `資料夾 ID：${maskDriveId(settings.folderId)}`
+    : "可輸入 Folder ID、完整資料夾網址，或輸入名稱讓程式搜尋／建立。";
 
-  const folderLink = safeDriveFolderLink(adminSettings.folderWebViewLink, folderId);
+  const folderLink = safeDriveFolderLink(settings.folderWebViewLink, settings.folderId);
   const openFolder = $("#open-storage-folder");
-  openFolder.hidden = !configured || !folderLink;
+  openFolder.hidden = !folderLink;
   if (folderLink) openFolder.href = folderLink;
-  else openFolder.removeAttribute("href");
 
-  let badgeState = configured ? "success" : "idle";
-  let badgeLabel = configured ? "已連線" : setupRequired ? "待設定" : "尚未連接";
+  let badgeState = settings.folderId ? "success" : "idle";
+  let badgeLabel = settings.folderId ? (state.user ? "已連線" : "待登入") : "待設定";
   if (state.googleSetupBusy) {
     badgeState = "checking";
     badgeLabel = "處理中";
   } else if (state.googleSetupFeedback) {
     badgeState = state.googleSetupFeedback.state;
     badgeLabel = state.googleSetupFeedback.label;
-  } else if (DEMO_MODE) {
-    badgeLabel = "展示模式";
   }
   const badge = $("#google-setup-state");
   badge.dataset.state = badgeState;
@@ -2328,70 +2858,59 @@ function renderGoogleSetup() {
 
 function renderSettings() {
   renderSettingsOrder();
-  $("#setting-api-url").value = CONFIG.API_BASE_URL;
-  $("#connection-setting-state").textContent = DEMO_MODE ? "展示模式" : CONFIG.API_BASE_URL ? "已設定" : "待設定";
-  const driveStatus = $("#drive-status-list");
   const config = state.apiConfig || {};
-  const adminSettings = state.adminSettings || {};
-  const folderName = adminSettings.folderName || config.folderName || "";
+  const settings = state.adminSettings || normalizeAdminSettings({
+    googleClientId: directSettings().googleClientId,
+    folderInput: directSettings().folderInput,
+    folderId: directSettings().folderId,
+    folderName: directSettings().folderName,
+    setupRequired: !directSettings().folderId,
+  });
+  const driveStatus = $("#drive-status-list");
   driveStatus.replaceChildren(
-    makeStatusRow("API 狀態", DEMO_MODE ? "本機展示資料" : config.apiReady ? "正常" : "等待連線"),
-    makeStatusRow("儲存模式", config.storageMode || (DEMO_MODE ? "尚未連接 Drive" : "由伺服器決定")),
-    makeStatusRow("目標資料夾", folderName || (config.driveConfigured ? "已安全設定" : "尚未設定")),
-    ...(adminSettings.folderId ? [makeStatusRow("資料夾 ID", maskDriveId(adminSettings.folderId))] : []),
-    makeStatusRow("分段大小", formatBytes(config.uploadChunkBytes || CONFIG.UPLOAD_CHUNK_BYTES, 0)),
+    makeStatusRow("連線架構", "純前端 REST + CORS"),
+    makeStatusRow("Google 帳戶", state.user?.email || "尚未授權"),
+    makeStatusRow("目標資料夾", settings.folderName || "尚未設定"),
+    ...(settings.folderId ? [makeStatusRow("資料夾 ID", maskDriveId(settings.folderId))] : []),
+    makeStatusRow("分段大小", formatBytes(CONFIG.UPLOAD_CHUNK_BYTES, 0)),
   );
-  $("#drive-setting-state").textContent = config.driveConfigured ? "已連線" : DEMO_MODE ? "展示模式" : "待設定";
+  $("#drive-setting-state").textContent = hasDriveSession() && settings.folderId ? "已連線" : settings.folderId ? "待登入" : "待設定";
+
   const privacy = $("#privacy-status-list");
   privacy.replaceChildren(
-    makeStatusRow("匿名上傳", config.anonymousUploads === false ? "停用" : "允許（建議加防機器人）"),
-    makeStatusRow("訪客 IP", config.ipDisplayMode === "full" ? "完整顯示" : "預設遮罩"),
-    makeStatusRow("網站刪除", "API 管理員移到垃圾桶"),
-    makeStatusRow("公開下載", config.publicDownloads === false ? "停用" : "經後端串流"),
+    makeStatusRow("API 基礎網址", "不需要"),
+    makeStatusRow("Client Secret", "不使用、不可填入前端"),
+    makeStatusRow("Access Token", "只存在記憶體，逾期後重新授權"),
+    makeStatusRow("檔案權限", "依登入帳戶的 Google Drive 權限"),
   );
-  $("#auth-setting-state").textContent = state.user ? (state.canManage ? "管理員" : "已登入") : "未登入";
-  $("#overview-connection").textContent = DEMO_MODE ? "展示模式" : CONFIG.API_BASE_URL ? "已設定" : "待設定";
-  $("#overview-drive").textContent = config.driveConfigured ? "已連線" : DEMO_MODE ? "展示模式" : "待設定";
-  $("#overview-auth").textContent = state.user ? (state.canManage ? "管理員" : "已登入") : "未登入";
+  $("#auth-setting-state").textContent = state.user ? "已授權" : "未登入";
+  $("#overview-drive").textContent = hasDriveSession() && settings.folderId ? "已連線" : settings.folderId ? "待登入" : "待設定";
+  $("#overview-auth").textContent = state.user ? "已授權" : "未登入";
   renderVersionInfo();
-  $("#scan-storage").disabled = !state.canManage || !navigator.onLine;
-  $("#cleanup-storage").disabled = !state.canManage || !navigator.onLine;
+  $("#scan-storage").disabled = !hasDriveSession() || !settings.folderId || !navigator.onLine;
+  $("#cleanup-storage").disabled = !hasDriveSession() || !settings.folderId || !navigator.onLine;
   renderGoogleSetup();
 }
 
-async function loadAdminSettings({ notify = false } = {}) {
-  if (DEMO_MODE || !state.canManage || state.googleSetupBusy) return null;
-  state.googleSetupBusy = true;
-  setGoogleSetupFeedback("checking", "讀取中");
-  renderGoogleSetup();
-  try {
-    const result = await api("/api/admin/settings");
-    state.adminSettings = normalizeAdminSettings(result);
-    if (state.adminSettings.googleClientId) state.googleClientId = state.adminSettings.googleClientId;
-    state.googleSetupDirty = false;
-    state.googleSetupFeedback = null;
-    return state.adminSettings;
-  } catch (error) {
-    setGoogleSetupFeedback("error", "讀取失敗");
-    if (notify || error.status !== 403) showToast(`無法讀取管理員設定：${error.message}`, "error");
-    return null;
-  } finally {
-    state.googleSetupBusy = false;
-    renderSettings();
-  }
+async function loadAdminSettings() {
+  state.adminSettings = normalizeAdminSettings(await api("/api/admin/settings"));
+  if (state.adminSettings.googleClientId) state.googleClientId = state.adminSettings.googleClientId;
+  state.googleSetupDirty = false;
+  renderSettings();
+  return state.adminSettings;
 }
 
 async function scanStorageCandidates(notify = true) {
   const label = $("#storage-cleanup-result");
-  if (!state.canManage) {
-    showToast("只有 API 管理員可以檢查未完成上傳", "error");
+  if (!hasDriveSession() || !currentFolderId()) {
+    showToast("請先登入 Google 並設定 Drive 資料夾", "error");
     return null;
   }
   try {
-    const result = DEMO_MODE ? { candidates: [], totalBytes: 0 } : await api("/api/admin/storage");
+    const result = await api("/api/admin/storage");
     label.textContent = result.candidates.length
       ? `找到 ${result.candidates.length} 筆，共 ${formatBytes(result.totalBytes)}；可清理 7 天前資料。`
-      : "沒有未完成上傳或孤兒附件。";
+      : "沒有 7 天前未完成的上傳或孤兒附件。";
     if (notify) showToast(result.candidates.length ? `找到 ${result.candidates.length} 筆待整理資料` : "Drive 儲存狀態正常");
     return result;
   } catch (error) {
@@ -2402,15 +2921,13 @@ async function scanStorageCandidates(notify = true) {
 }
 
 async function cleanupStorageCandidates() {
-  if (!state.canManage) return;
-  if (!confirm("確定要把 7 天前未完成的上傳與孤兒附件移到 Drive 垃圾桶嗎？")) return;
+  if (!hasDriveSession() || !currentFolderId()) return;
+  if (!confirm("確定要把 7 天前未完成的上傳與孤兒附件移到 Google Drive 垃圾桶嗎？")) return;
   try {
-    const result = DEMO_MODE
-      ? { results: [] }
-      : await api("/api/admin/storage/cleanup", {
-          method: "POST",
-          body: JSON.stringify({ olderThanHours: 168 }),
-        });
+    const result = await api("/api/admin/storage/cleanup", {
+      method: "POST",
+      body: JSON.stringify({ olderThanHours: 168 }),
+    });
     const success = (result.results || []).filter((item) => item.success).length;
     showToast(`已清理 ${success} 筆 Drive 資料`);
     await scanStorageCandidates(false);
@@ -2420,144 +2937,76 @@ async function cleanupStorageCandidates() {
 }
 
 async function loadPublicConfig() {
-  if (DEMO_MODE) {
-    state.apiConfig = {
-      apiReady: false,
-      driveConfigured: false,
-      googleClientId: state.googleClientId,
-      folderName: "",
-      setupRequired: true,
-      storageMode: "展示模式",
-      anonymousUploads: true,
-      publicDownloads: true,
-      ipDisplayMode: "masked",
-      uploadChunkBytes: CONFIG.UPLOAD_CHUNK_BYTES,
-    };
-    setSyncStatus("展示模式", "online");
-    renderSettings();
-    return;
-  }
-  try {
-    const previousClientId = normalizeGoogleClientId(state.googleClientId);
-    state.apiConfig = await api("/api/config");
-    const publishedClientId = normalizeGoogleClientId(state.apiConfig.googleClientId);
-    if (publishedClientId) {
-      state.googleClientId = publishedClientId;
-      clearPublishedBootstrapClientId();
-    }
-    setSyncStatus(state.apiConfig.driveConfigured ? "Drive 已連線" : "API 已連線", "online");
-    if (state.googleSignInClientId && publishedClientId && publishedClientId !== previousClientId) {
-      initializeGoogleSignIn(0, true);
-    }
-  } catch (error) {
-    state.apiConfig = null;
-    setSyncStatus("API 連線失敗", "offline");
-    showToast(`API 狀態檢查失敗：${error.message}`, "error");
-  }
+  state.apiConfig = await api("/api/config");
+  const clientId = normalizeGoogleClientId(state.apiConfig.googleClientId);
+  if (clientId) state.googleClientId = clientId;
+  setSyncStatus(hasDriveSession() ? (currentFolderId() ? "Drive 已連線" : "請設定 Drive 資料夾") : "請登入 Google", hasDriveSession() ? "online" : "offline");
   renderSettings();
 }
 
 function bootstrapGoogleLogin() {
-  if (DEMO_MODE) {
-    showToast("請先設定 API 網址，再套用 Google Client ID", "error");
-    return;
-  }
-  const values = validateGoogleSetup({ requireFolder: false });
+  const values = validateGoogleSetup({ requireFolder: true });
   if (!values) return;
-  const current = readLocalJson("drivedock_connection", {});
-  const next = { GOOGLE_CLIENT_ID: values.googleClientId };
-  if (current.API_BASE_URL) next.API_BASE_URL = String(current.API_BASE_URL).replace(/\/$/, "");
-  localStorage.setItem("drivedock_connection", JSON.stringify(next));
-  sessionStorage.setItem("drivedock_bootstrap_notice", "已套用公開 Client ID，請使用管理員 Google 帳戶登入。" );
-  location.reload();
+  saveDirectSettings({
+    googleClientId: values.googleClientId,
+    folderInput: values.folderInput,
+    folderId: extractFolderId(values.folderInput) || "",
+    folderName: "",
+  });
+  state.googleClientId = values.googleClientId;
+  state.pendingFolderInput = values.folderInput;
+  state.googleSetupDirty = false;
+  state.adminSettings = normalizeAdminSettings({
+    googleClientId: values.googleClientId,
+    folderInput: values.folderInput,
+    folderId: extractFolderId(values.folderInput),
+    setupRequired: true,
+  });
+  initializeGoogleSignIn(0, true);
+  requestGoogleSignIn();
+  renderSettings();
 }
 
 async function saveGoogleSetup(event) {
   event?.preventDefault?.();
-  if (!state.canManage) {
-    if (!state.user && !normalizeGoogleClientId(state.apiConfig?.googleClientId) && !DEMO_MODE) {
-      bootstrapGoogleLogin();
-      return;
-    }
-    showToast("只有 API 管理員可以變更全站 Google Drive 設定", "error");
-    return;
-  }
-  if (!navigator.onLine) {
-    showToast("目前離線，無法驗證並儲存 Drive 設定", "error");
-    return;
-  }
-  const values = validateGoogleSetup();
+  const values = validateGoogleSetup({ requireFolder: true });
   if (!values) return;
-  const payload = {
-    googleClientId: values.googleClientId,
-    folderInput: values.folderInput,
-  };
-  const revision = state.adminSettings?.revision;
-  if (Number.isFinite(revision)) payload.expectedRevision = revision;
-
+  if (!state.user || !hasDriveSession()) {
+    bootstrapGoogleLogin();
+    return;
+  }
   state.googleSetupBusy = true;
   setGoogleSetupFeedback("checking", "驗證中");
   renderGoogleSetup();
   try {
     const result = await api("/api/admin/settings", {
       method: "PATCH",
-      body: JSON.stringify(payload),
+      body: JSON.stringify(values),
     });
     state.adminSettings = normalizeAdminSettings(result);
-    state.googleClientId = state.adminSettings.googleClientId || values.googleClientId;
+    state.googleClientId = result.googleClientId;
     state.apiConfig = {
       ...(state.apiConfig || {}),
-      googleClientId: state.googleClientId,
-      folderName: state.adminSettings.folderName,
-      driveConfigured: Boolean(state.adminSettings.folderId),
-      setupRequired: state.adminSettings.setupRequired,
+      googleClientId: result.googleClientId,
+      folderName: result.folderName,
+      driveConfigured: true,
+      setupRequired: false,
     };
     state.googleSetupDirty = false;
     clearGoogleSetupErrors();
-    clearPublishedBootstrapClientId();
-    setGoogleSetupFeedback("success", result.folderCreated ? "已建立並連線" : "已儲存並連線");
-    showToast(result.folderCreated ? `已建立並連接「${state.adminSettings.folderName}」` : `已連接「${state.adminSettings.folderName}」`);
-    if (result.reloadRequired) {
-      sessionStorage.setItem("drivedock_setup_notice", "Google 與 Drive 共用設定已更新。" );
-      setTimeout(() => location.reload(), 1200);
-    } else {
-      initializeGoogleSignIn(0, true);
-      await Promise.all([loadFiles(true), loadPhotos(true), loadNotes(true)]);
-    }
+    setGoogleSetupFeedback("success", "已連接");
+    state.filesLoaded = false;
+    state.photosLoaded = false;
+    state.notesLoaded = false;
+    await Promise.all([loadFiles(true), loadPhotos(true), loadNotes(true)]);
+    showToast(`已連接「${result.folderName}」`);
   } catch (error) {
-    setGoogleSetupFeedback("error", error.status === 409 ? "設定已更新" : "驗證失敗");
-    if (error.status === 409) setTimeout(() => void loadAdminSettings(), 0);
+    setGoogleSetupFeedback("error", "驗證失敗");
     showToast(`無法儲存 Google Drive 設定：${error.message}`, "error");
   } finally {
     state.googleSetupBusy = false;
     renderSettings();
   }
-}
-
-function saveLocalConnection() {
-  const API_BASE_URL = $("#setting-api-url").value.trim().replace(/\/$/, "");
-  if (API_BASE_URL && !/^https:\/\//i.test(API_BASE_URL) && !/^http:\/\/localhost(?::\d+)?$/i.test(API_BASE_URL)) {
-    showToast("正式 API 網址必須使用 HTTPS", "error");
-    return;
-  }
-  const current = readLocalJson("drivedock_connection", {});
-  const next = {};
-  if (API_BASE_URL) next.API_BASE_URL = API_BASE_URL;
-  if (current.GOOGLE_CLIENT_ID) next.GOOGLE_CLIENT_ID = normalizeGoogleClientId(current.GOOGLE_CLIENT_ID);
-  if (Object.keys(next).length) localStorage.setItem("drivedock_connection", JSON.stringify(next));
-  else localStorage.removeItem("drivedock_connection");
-  location.reload();
-}
-
-function resetLocalConnection() {
-  const current = readLocalJson("drivedock_connection", {});
-  const bootstrapClientId = normalizeGoogleClientId(current.GOOGLE_CLIENT_ID);
-  if (bootstrapClientId) {
-    localStorage.setItem("drivedock_connection", JSON.stringify({ GOOGLE_CLIENT_ID: bootstrapClientId }));
-  } else {
-    localStorage.removeItem("drivedock_connection");
-  }
-  location.reload();
 }
 
 function openModal(id, focusTarget = null) {
@@ -2579,7 +3028,12 @@ function closeModal(target) {
   }
   backdrop.hidden = true;
   if (!$(".modal-backdrop:not([hidden])")) document.body.classList.remove("modal-open");
-  if (backdrop.id === "photo-viewer") state.viewerPhoto = null;
+  if (backdrop.id === "photo-viewer") {
+    state.viewerPhoto = null;
+    if (state.photoObjectUrl) URL.revokeObjectURL(state.photoObjectUrl);
+    state.photoObjectUrl = "";
+    $("#photo-viewer-image").removeAttribute("src");
+  }
   const focus = state.upload.opener || state.lastModalFocus;
   state.upload.opener = null;
   focus?.focus?.();
@@ -2751,8 +3205,6 @@ function initializeEvents() {
     }),
   );
 
-  $("#save-local-connection").addEventListener("click", saveLocalConnection);
-  $("#reset-local-connection").addEventListener("click", resetLocalConnection);
   $("#google-setup-form").addEventListener("submit", saveGoogleSetup);
   $("#bootstrap-google-login").addEventListener("click", bootstrapGoogleLogin);
   [$("#setup-client-id"), $("#setup-folder-input")].forEach((input) => {
@@ -2791,7 +3243,7 @@ function initializeEvents() {
 async function initialize() {
   applyTheme(localStorage.getItem("drivedock_theme") || "dark", false);
   const hint = readLocalJson("drivedock_profile_hint", null);
-  if (hint?.name && !DEMO_MODE) {
+  if (hint?.name) {
     $("#account-name").textContent = hint.name;
     $("#account-status").textContent = "正在恢復登入…";
   }

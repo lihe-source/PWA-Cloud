@@ -3641,3 +3641,10 @@ body.modal-open {
     content: attr(data-mobile-label);
   }
 }
+
+/* V1.4.0：純前端版本的設定摘要只有三項，桌面平均分欄。 */
+@media (min-width: 1121px) {
+  .settings-overview {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

@@ -1,17 +1,18 @@
 /**
  * 雲匣 DriveDock 公開前端設定。
  *
- * 這個檔案會跟著 GitHub Pages 公開，請勿放入 Client Secret、Refresh Token、
- * Service Account JSON、管理員名單或其他私密資料。
+ * 這個檔案會跟著 GitHub Pages 公開。Google OAuth Web Client ID 與
+ * Drive Folder ID 可預先填入，也可由使用者在設定頁儲存在本機。
+ * 請勿放入 Client Secret、Access Token、Refresh Token 或 Service Account JSON。
  */
 window.DRIVEDOCK_CONFIG = Object.freeze({
   APP_NAME: "雲匣 DriveDock",
-  API_BASE_URL: "",
   GOOGLE_CLIENT_ID: "",
+  DRIVE_FOLDER_ID: "",
+  DRIVE_FOLDER_NAME: "",
   MAX_FILE_BYTES: 524288000,
   UPLOAD_CHUNK_BYTES: 8388608,
-  DEMO_MODE_WHEN_UNCONFIGURED: true,
-  VERSION: "1.3.0",
-  BUILD_DATE: "2026-07-12",
-  CACHE_NAME: "drivedock-v1.3.0",
+  VERSION: "1.4.0",
+  BUILD_DATE: "2026-07-13",
+  CACHE_NAME: "drivedock-v1.4.0",
 });
