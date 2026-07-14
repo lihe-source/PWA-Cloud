@@ -24,8 +24,8 @@ const CONFIG = Object.freeze({
 });
 const DEMO_MODE = false;
 const APP_ID = "drivedock";
-const APP_VERSION = String(CONFIG.VERSION || "1.5.0");
-const APP_BUILD_DATE = String(CONFIG.BUILD_DATE || "2026-07-13");
+const APP_VERSION = String(CONFIG.VERSION || "1.6.0");
+const APP_BUILD_DATE = String(CONFIG.BUILD_DATE || "2026-07-14");
 const APP_CACHE_NAME = String(CONFIG.CACHE_NAME || `drivedock-v${APP_VERSION}`);
 const VERSION_MANIFEST_URL = "./version.json";
 const DRIVE_API_BASE = "https://www.googleapis.com/drive/v3";
@@ -437,6 +437,75 @@ async function fetchDriveBlob(fileId) {
   return response.blob();
 }
 
+function safeDownloadName(value = "download") {
+  const clean = String(value || "download")
+    .normalize("NFC")
+    .replace(/[\u0000-\u001f\u007f\/\\:*?"<>|]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim();
+  return (clean || "download").slice(0, 220);
+}
+
+function triggerBlobDownload(blob, filename) {
+  if (!(blob instanceof Blob) || !blob.size) throw new Error("下載內容為空白");
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = safeDownloadName(filename);
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  // iOS PWA 可能在點擊後才建立預覽，延後釋放可避免 Blob URL 過早失效。
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+}
+
+async function downloadDriveItem(item, button = null) {
+  if (!item?.id) {
+    showToast("找不到可下載的檔案 ID", "error");
+    return;
+  }
+  if (!hasDriveSession()) {
+    requestGoogleSignIn({ quiet: true });
+    showToast("Google 授權需要恢復；完成授權後請再按一次下載", "error");
+    return;
+  }
+  if (!navigator.onLine) {
+    showToast("目前離線，無法下載檔案", "error");
+    return;
+  }
+  if (state.downloadingIds.has(item.id)) return;
+
+  const originalText = button?.textContent || "";
+  state.downloadingIds.add(item.id);
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = "下載中";
+  }
+  setSyncStatus("下載檔案中");
+  try {
+    const blob = await fetchDriveBlob(item.id);
+    triggerBlobDownload(blob, item.name || "download");
+    showToast(`已建立本機下載：${item.name || "檔案"}`);
+    setSyncStatus("Drive 已同步", "online");
+  } catch (error) {
+    const detail = error?.status === 403
+      ? "目前帳戶沒有下載權限，或檔案擁有者已禁止下載"
+      : error?.message || "未知錯誤";
+    showToast(`下載失敗：${detail}`, "error");
+    setSyncStatus("下載失敗", "offline");
+  } finally {
+    state.downloadingIds.delete(item.id);
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = originalText || "下載";
+    }
+  }
+}
+
 async function resolveDriveFolder(folderInput) {
   const input = normalizeFolderInput(folderInput);
   if (!input) throw makeApiError("請輸入 Google Drive Folder ID、網址或資料夾名稱", 400, "FOLDER_REQUIRED");
@@ -614,7 +683,7 @@ async function noteFromDriveFile(file) {
     name: attachment.name || "附件",
     sizeBytes: Number(attachment.sizeBytes || 0),
     mimeType: attachment.mimeType || "application/octet-stream",
-    contentUrl: attachment.id ? `https://drive.google.com/open?id=${encodeURIComponent(attachment.id)}` : "#",
+    contentUrl: "",
   }));
   const capabilities = file.capabilities || {};
   return {
@@ -924,6 +993,7 @@ const state = {
   viewerPhotoPngBlob: null,
   photoPngCache: new Map(),
   copyingPhotoId: "",
+  downloadingIds: new Set(),
   installPrompt: null,
   apiConfig: null,
   adminSettings: null,
@@ -1519,6 +1589,10 @@ function renderFileHead() {
   selectTh.append(all);
   row.append(selectTh);
 
+  const downloadTh = make("th", "", "下載");
+  downloadTh.scope = "col";
+  row.append(downloadTh);
+
   const editTh = make("th", "", "編輯");
   editTh.scope = "col";
   row.append(editTh);
@@ -1611,12 +1685,11 @@ function buildFileCell(record, key) {
     const wrapper = make("div", "file-name-cell");
     wrapper.append(make("span", "file-type-icon", record.extension === "—" ? "FILE" : record.extension.slice(0, 4)));
     const copy = make("span");
-    const name = record.contentUrl || record.webViewLink ? make("a", "", record.name) : make("strong", "", record.name);
-    if (name.tagName === "A") {
-      name.href = record.contentUrl || record.webViewLink;
-      name.target = "_blank";
-      name.rel = "noopener";
-    }
+    const name = make("button", "file-name-download", record.name);
+    name.type = "button";
+    name.title = `下載 ${record.name}`;
+    name.setAttribute("aria-label", name.title);
+    name.addEventListener("click", () => downloadDriveItem(record, name));
     copy.append(name, make("small", "", record.mimeType));
     wrapper.append(copy);
     td.append(wrapper);
@@ -1659,6 +1732,17 @@ function renderFiles() {
     });
     selectTd.append(checkbox);
     row.append(selectTd);
+
+    const downloadTd = make("td");
+    downloadTd.dataset.column = "download";
+    downloadTd.dataset.label = "下載";
+    const download = make("button", "row-action row-action-text file-download-action", state.downloadingIds.has(record.id) ? "下載中" : "下載");
+    download.type = "button";
+    download.disabled = state.downloadingIds.has(record.id) || !navigator.onLine;
+    download.setAttribute("aria-label", `下載 ${record.name}`);
+    download.addEventListener("click", () => downloadDriveItem(record, download));
+    downloadTd.append(download);
+    row.append(downloadTd);
 
     const editTd = make("td");
     editTd.dataset.column = "edit";
@@ -1834,7 +1918,7 @@ function renderPhotos() {
     preview.type = "button";
     preview.setAttribute("aria-label", `開啟 ${photo.name}`);
     const image = make("img");
-    image.src = photo.thumbnailUrl || photo.contentUrl || "./icon-512.png";
+    image.src = photo.thumbnailUrl || "./icon-512.png";
     image.alt = "";
     image.loading = "lazy";
     image.decoding = "async";
@@ -1872,6 +1956,11 @@ function renderPhotos() {
     const view = make("button", "row-action row-action-text", "預覽");
     view.type = "button";
     view.addEventListener("click", () => openPhotoViewer(photo));
+    const download = make("button", "row-action row-action-text photo-download-action", state.downloadingIds.has(photo.id) ? "下載中" : "下載");
+    download.type = "button";
+    download.disabled = state.downloadingIds.has(photo.id) || !navigator.onLine;
+    download.setAttribute("aria-label", `下載 ${photo.name}`);
+    download.addEventListener("click", () => downloadDriveItem(photo, download));
     const copy = make("button", "row-action row-action-text photo-copy-action", state.copyingPhotoId === photo.id ? "處理中" : "複製");
     copy.type = "button";
     copy.dataset.photoId = photo.id;
@@ -1881,7 +1970,7 @@ function renderPhotos() {
       openPhotoViewer(photo);
       showToast("完整圖片準備完成後，可按右上角「複製」");
     });
-    actions.append(view, copy);
+    actions.append(view, download, copy);
     actionTd.append(actions);
 
     row.append(selectTd, previewTd, nameTd, uploaderTd, timeTd, sizeTd, actionTd);
@@ -2110,6 +2199,11 @@ function handleViewerCopyClick(event) {
   copyCurrentPhoto(state.viewerPhoto);
 }
 
+function handleViewerDownloadClick(event) {
+  event.preventDefault();
+  if (state.viewerPhoto) void downloadDriveItem(state.viewerPhoto, event.currentTarget);
+}
+
 async function deleteSelectedPhotos() {
   if (!state.canManage || state.selectedPhotos.size === 0) return;
   const count = state.selectedPhotos.size;
@@ -2175,7 +2269,7 @@ function normalizeNote(raw) {
       id: String(attachment.id || uid()),
       name: attachment.name || "附件",
       sizeBytes: Number(attachment.sizeBytes ?? attachment.size ?? 0),
-      contentUrl: attachment.contentUrl || `https://drive.google.com/open?id=${encodeURIComponent(attachment.id)}`,
+      contentUrl: "",
     })),
     permissions: {
       canEdit: Boolean(raw.permissions?.canEdit ?? raw.canEdit),
@@ -2221,12 +2315,13 @@ function renderNotes() {
     const links = make("div", "attachment-links");
     if (!note.attachments.length) links.append(make("span", "", "—"));
     note.attachments.forEach((attachment) => {
-      const link = make("a", "attachment-link");
-      link.href = attachment.contentUrl || "#";
-      link.target = "_blank";
-      link.rel = "noopener";
-      link.title = `${attachment.name} · ${formatBytes(attachment.sizeBytes)}`;
-      link.append(make("span", "", `⌁ ${attachment.name}`));
+      const link = make("button", "attachment-link");
+      link.type = "button";
+      link.title = `下載 ${attachment.name} · ${formatBytes(attachment.sizeBytes)}`;
+      link.setAttribute("aria-label", link.title);
+      link.disabled = state.downloadingIds.has(attachment.id) || !navigator.onLine;
+      link.append(make("span", "", state.downloadingIds.has(attachment.id) ? `↓ 下載中：${attachment.name}` : `↓ ${attachment.name}`));
+      link.addEventListener("click", () => downloadDriveItem(attachment, link));
       links.append(link);
     });
     attachmentsTd.append(links);
@@ -2298,7 +2393,13 @@ function renderNoteAttachments() {
   const fragment = document.createDocumentFragment();
   state.noteExistingAttachments.forEach((attachment) => {
     const item = make("div", "attachment-item");
-    item.append(make("span", "", `⌁ ${attachment.name} · ${formatBytes(attachment.sizeBytes)}`));
+    const info = make("span", "", `⌁ ${attachment.name} · ${formatBytes(attachment.sizeBytes)}`);
+    const download = make("button", "row-action row-action-text", state.downloadingIds.has(attachment.id) ? "下載中" : "下載");
+    download.type = "button";
+    download.disabled = state.downloadingIds.has(attachment.id) || !navigator.onLine;
+    download.setAttribute("aria-label", `下載附件 ${attachment.name}`);
+    download.addEventListener("click", () => downloadDriveItem(attachment, download));
+    item.append(info, download);
     const remove = make("button", "row-action", "×");
     remove.type = "button";
     remove.hidden = state.noteReadOnly;
@@ -3361,6 +3462,7 @@ function initializeEvents() {
 
   $("#refresh-photos").addEventListener("click", () => loadPhotos(true));
   $("#delete-photos").addEventListener("click", deleteSelectedPhotos);
+  $("#download-photo").addEventListener("click", handleViewerDownloadClick);
   $("#copy-photo").addEventListener("click", handleViewerCopyClick);
   $$('[data-photo-filter]').forEach((button) =>
     button.addEventListener("click", () => {

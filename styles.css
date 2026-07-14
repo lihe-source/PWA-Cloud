@@ -3648,3 +3648,75 @@ body.modal-open {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* v1.6.0：以 Google Drive API 取回 Blob，再由瀏覽器建立本機下載。 */
+.file-name-download {
+  display: block;
+  max-width: 360px;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-name-download:hover,
+.file-name-download:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.file-name-download[aria-busy="true"],
+.file-download-action[aria-busy="true"],
+.photo-download-action[aria-busy="true"],
+.attachment-link[aria-busy="true"],
+#download-photo[aria-busy="true"] {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.attachment-link {
+  appearance: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.attachment-link:hover:not(:disabled),
+.attachment-link:focus-visible {
+  border-color: var(--line-strong);
+  background: var(--panel-strong);
+  color: var(--accent);
+}
+
+.attachment-link:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.photo-table th:last-child,
+.photo-table td:last-child {
+  width: 196px;
+}
+
+.file-table-wrap #file-table {
+  min-width: 930px;
+}
+
+@media (max-width: 620px) {
+  .file-name-download {
+    max-width: 240px;
+  }
+
+  .table-row-actions {
+    min-width: 182px;
+  }
+}

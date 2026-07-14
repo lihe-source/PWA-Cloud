@@ -1,4 +1,4 @@
-const CACHE_NAME = "drivedock-v1.5.0";
+const CACHE_NAME = "drivedock-v1.6.0";
 const APP_SHELL = [
   "./",
   "./index.html",
