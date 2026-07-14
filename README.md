@@ -1,8 +1,8 @@
-# 雲匣 DriveDock V1.6.1
+# 雲匣 DriveDock V1.7.0
 
-> V1.6.1 修正 Google 授權服務在 iPhone PWA／慢速網路下尚未載入就按登入的競態問題。授權程式會於啟動時主動預載，失敗時可由登入按鈕重新嘗試。
+> V1.7.0 將相片頁改為更直觀的卡片式相簿版面，直接顯示縮圖、選取框、檔名與時間；同時保留 Blob 下載、圖片複製與 Google 帳戶記憶功能。
 
-DriveDock 是一套可安裝在 iPhone、Android 與桌面瀏覽器的 PWA 檔案櫃。V1.6.1 採用 **GitHub Pages 純前端架構**：使用 Google Identity Services 取得短效 Access Token，再由瀏覽器直接呼叫 Google Drive REST API。此版新增內網相容的 Blob 下載流程，並保留 iPhone 圖片複製與登入狀態恢復。
+DriveDock 是一套可安裝在 iPhone、Android 與桌面瀏覽器的 PWA 檔案櫃。V1.7.0 採用 **GitHub Pages 純前端架構**：使用 Google Identity Services 取得短效 Access Token，再由瀏覽器直接呼叫 Google Drive REST API。此版重點為相片頁卡片式改版，並保留內網相容的 Blob 下載、iPhone 圖片複製與登入狀態恢復。
 
 ```text
 GitHub Pages PWA
@@ -22,7 +22,7 @@ Google Drive API
 - Service Account JSON
 
 
-## V1.6.1：內網相容下載
+## V1.7.0：內網相容下載
 
 - 檔案、照片與備註附件不再以 `drive.google.com` 的 `webViewLink` 開啟。
 - 使用目前登入帳戶的 OAuth Access Token 呼叫 Google Drive API `files/{id}?alt=media`。
@@ -175,7 +175,7 @@ Client ID、Folder ID、已登入帳號與尚未過期的短效 Access Token 會
 
 ## Google Drive 權限
 
-V1.6.1 使用完整 Google Drive scope，才能直接存取使用者貼入的既有 Folder ID、共享資料夾及 V1.3.0 已建立的資料。Google OAuth 可能顯示較廣泛的 Drive 授權說明。
+V1.7.0 使用完整 Google Drive scope，才能直接存取使用者貼入的既有 Folder ID、共享資料夾及 V1.3.0 已建立的資料。Google OAuth 可能顯示較廣泛的 Drive 授權說明。
 
 請確認：
 
@@ -194,7 +194,7 @@ V1.6.1 使用完整 Google Drive scope，才能直接存取使用者貼入的既
 
 ## 相片複製
 
-V1.6.1 的相片複製流程會：
+V1.7.0 的相片複製流程會：
 
 1. 開啟預覽時，先使用目前 Google Access Token 從 Drive 讀取原始圖片。
 2. 預先將圖片轉成 PNG，並暫存在記憶體快取。
@@ -220,7 +220,7 @@ V1.6.1 的相片複製流程會：
 目前版本：
 
 ```text
-V1.6.1
+V1.7.0
 ```
 
 程式啟動時會讀取 `version.json`。發現新版本時，會更新 Service Worker、清除舊的 DriveDock Cache Storage，並重新載入。

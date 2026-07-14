@@ -24,7 +24,7 @@ const CONFIG = Object.freeze({
 });
 const DEMO_MODE = false;
 const APP_ID = "drivedock";
-const APP_VERSION = String(CONFIG.VERSION || "1.6.1");
+const APP_VERSION = String(CONFIG.VERSION || "1.7.0");
 const APP_BUILD_DATE = String(CONFIG.BUILD_DATE || "2026-07-14");
 const APP_CACHE_NAME = String(CONFIG.CACHE_NAME || `drivedock-v${APP_VERSION}`);
 const VERSION_MANIFEST_URL = "./version.json";
@@ -2024,14 +2024,30 @@ function visiblePhotos() {
 }
 
 function renderPhotos() {
-  const body = $("#photo-table-body");
+  const grid = $("#photo-grid");
   const photos = visiblePhotos();
   const fragment = document.createDocumentFragment();
-  photos.forEach((photo) => {
-    const row = make("tr", state.selectedPhotos.has(photo.id) ? "is-selected" : "");
 
-    const selectTd = make("td");
-    selectTd.dataset.label = "選取";
+  photos.forEach((photo) => {
+    const card = make("article", `photo-card${state.selectedPhotos.has(photo.id) ? " is-selected" : ""}`);
+
+    const preview = make("button", "photo-open");
+    preview.type = "button";
+    preview.setAttribute("aria-label", `開啟 ${photo.name}`);
+    const image = make("img");
+    image.src = photo.thumbnailUrl || "./icon-512.png";
+    image.alt = photo.name;
+    image.loading = "lazy";
+    image.decoding = "async";
+    image.addEventListener("error", () => {
+      if (!image.src.endsWith("icon-512.png")) image.src = "./icon-512.png";
+    });
+    preview.append(image);
+    preview.addEventListener("click", () => openPhotoViewer(photo));
+
+    const body = make("div", "photo-card-body");
+
+    const selectLabel = make("label", "photo-select-inline");
     const checkbox = make("input");
     checkbox.type = "checkbox";
     checkbox.checked = state.selectedPhotos.has(photo.id);
@@ -2041,76 +2057,58 @@ function renderPhotos() {
       else state.selectedPhotos.delete(photo.id);
       renderPhotos();
     });
-    selectTd.append(checkbox);
+    selectLabel.append(checkbox, make("span", "", "選取"));
 
-    const previewTd = make("td");
-    previewTd.dataset.label = "預覽";
-    const preview = make("button", "photo-table-preview");
-    preview.type = "button";
-    preview.setAttribute("aria-label", `開啟 ${photo.name}`);
-    const image = make("img");
-    image.src = photo.thumbnailUrl || "./icon-512.png";
-    image.alt = "";
-    image.loading = "lazy";
-    image.decoding = "async";
-    image.addEventListener("error", () => {
-      if (!image.src.endsWith("icon-512.png")) image.src = "./icon-512.png";
-    });
-    preview.append(image);
-    preview.addEventListener("click", () => openPhotoViewer(photo));
-    previewTd.append(preview);
+    const title = make("div", "photo-card-title");
+    title.append(make("strong", "", photo.name));
 
-    const nameTd = make("td");
-    nameTd.dataset.label = "檔案名稱";
-    const nameStack = make("span", "cell-stack photo-name-stack");
-    nameStack.append(make("strong", "", photo.name));
-    nameStack.append(make("small", "", photo.mimeType || "圖片"));
-    nameTd.append(nameStack);
+    const dateLine = make("div", "photo-card-meta", formatDate(photo.createdTime));
 
-    const uploaderTd = make("td");
-    uploaderTd.dataset.label = "上傳者";
-    uploaderTd.append(makeUploaderCell(photo));
+    const submeta = make("div", "photo-card-submeta");
+    submeta.append(
+      make("span", "", uploaderLabel(photo)),
+      make("span", "", formatBytes(photo.sizeBytes)),
+    );
 
-    const timeTd = make("td");
-    timeTd.dataset.label = "上傳時間";
-    const timeStack = make("span", "cell-stack");
-    timeStack.append(make("strong", "", formatDate(photo.createdTime, false)));
-    timeStack.append(make("small", "", new Date(photo.createdTime).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false })));
-    timeTd.append(timeStack);
-
-    const sizeTd = make("td", "", formatBytes(photo.sizeBytes));
-    sizeTd.dataset.label = "大小";
-
-    const actionTd = make("td");
-    actionTd.dataset.label = "操作";
-    const actions = make("div", "table-row-actions");
-    const view = make("button", "row-action row-action-text", "預覽");
+    const actions = make("div", "photo-card-actions");
+    const view = make("button", "secondary-button compact", "預覽");
     view.type = "button";
     view.addEventListener("click", () => openPhotoViewer(photo));
-    const download = make("button", "row-action row-action-text photo-download-action", state.downloadingIds.has(photo.id) ? "下載中" : "下載");
+
+    const download = make(
+      "button",
+      "secondary-button compact photo-download-action",
+      state.downloadingIds.has(photo.id) ? "下載中" : "下載",
+    );
     download.type = "button";
     download.disabled = state.downloadingIds.has(photo.id) || !navigator.onLine;
     download.setAttribute("aria-label", `下載 ${photo.name}`);
     download.addEventListener("click", () => downloadDriveItem(photo, download));
-    const copy = make("button", "row-action row-action-text photo-copy-action", state.copyingPhotoId === photo.id ? "處理中" : "複製");
+
+    const copy = make(
+      "button",
+      "secondary-button compact photo-copy-action",
+      state.copyingPhotoId === photo.id ? "處理中" : "複製",
+    );
     copy.type = "button";
     copy.dataset.photoId = photo.id;
     copy.disabled = Boolean(state.copyingPhotoId);
     copy.setAttribute("aria-label", `複製 ${photo.name}`);
     copy.addEventListener("click", () => {
       openPhotoViewer(photo);
-      showToast("完整圖片準備完成後，可按右上角「複製」");
+      showToast("正在準備完整圖片；若按鈕顯示可複製，即可直接從預覽右上角複製");
     });
-    actions.append(view, download, copy);
-    actionTd.append(actions);
 
-    row.append(selectTd, previewTd, nameTd, uploaderTd, timeTd, sizeTd, actionTd);
-    fragment.append(row);
+    actions.append(view, download, copy);
+    body.append(selectLabel, title, dateLine, submeta, actions);
+    card.append(preview, body);
+    fragment.append(card);
   });
-  body.replaceChildren(fragment);
+
+  grid.replaceChildren(fragment);
   $("#photo-count").textContent = String(photos.length);
   $("#photo-empty").hidden = photos.length > 0;
-  $("#photo-table").hidden = photos.length === 0;
+  grid.hidden = photos.length === 0;
   $("#selected-photo-count").textContent = String(state.selectedPhotos.size);
   $("#delete-photos").disabled = state.selectedPhotos.size === 0 || !state.canManage || !navigator.onLine;
 }

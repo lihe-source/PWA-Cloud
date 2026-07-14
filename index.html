@@ -66,7 +66,7 @@
 <h1 id="page-title">檔案總覽</h1>
 </div>
 <div class="topbar-actions">
-<span aria-label="目前應用程式版本" class="top-version-badge" id="top-version-badge" title="目前應用程式版本"><span class="top-version-label">目前</span><strong id="top-version-value">V1.6.1</strong></span>
+<span aria-label="目前應用程式版本" class="top-version-badge" id="top-version-badge" title="目前應用程式版本"><span class="top-version-label">目前</span><strong id="top-version-value">V1.7.0</strong></span>
 <span class="sync-pill" id="sync-pill">
 <span aria-hidden="true" class="status-dot"></span>
 <span>Drive 檢查中</span>
@@ -224,36 +224,24 @@
 <button class="danger-button" disabled="" id="delete-photos" type="button">刪除已選 <span id="selected-photo-count">0</span></button>
 </div>
 </div>
-<section aria-labelledby="photo-list-title" class="content-panel photo-list-panel">
-<div class="panel-head compact-panel-head">
+<section aria-labelledby="photo-list-title" class="content-panel photo-list-panel photo-gallery-panel">
+<div class="photo-quick-tip" role="note">
+<strong>快速上傳：</strong> 在相簿頁可按 <kbd>Ctrl</kbd> + <kbd>V</kbd> 貼上圖片直接上傳；手機請使用「選擇照片上傳」。
+</div>
+<div class="panel-head photo-grid-head compact-panel-head">
 <div>
 <span class="section-kicker">PHOTO INDEX</span>
-<h2 id="photo-list-title">相片列表 <span class="count-badge" id="photo-count">0</span></h2>
+<h2 id="photo-list-title">相片圖庫 <span class="count-badge" id="photo-count">0</span></h2>
+<p class="panel-subtitle">改為卡片式瀏覽，直接看縮圖、檔名與時間，點圖片可預覽，勾選後可批次刪除。</p>
 </div>
-<small class="list-scroll-hint">標題列固定，可上下滾動查看更多相片</small>
+<small class="list-scroll-hint">點圖片可放大預覽；勾選卡片即可加入批次刪除。</small>
 </div>
-<div class="table-wrap list-scroll-wrap photo-table-wrap">
-<table class="data-table photo-table" id="photo-table">
-<caption class="sr-only">Google Drive 相片列表；可選取、預覽與複製圖片。</caption>
-<thead>
-<tr>
-<th scope="col">選取</th>
-<th scope="col">預覽</th>
-<th scope="col">檔案名稱</th>
-<th scope="col">上傳者</th>
-<th scope="col">上傳時間</th>
-<th scope="col">大小</th>
-<th scope="col">操作</th>
-</tr>
-</thead>
-<tbody aria-live="polite" id="photo-table-body"></tbody>
-</table>
+<div aria-live="polite" class="photo-grid" id="photo-grid"></div>
 <div class="empty-state photo-empty" hidden="" id="photo-empty">
 <span aria-hidden="true" class="empty-icon">▧</span>
 <h3>圖庫還是空的</h3>
 <p>拖入圖片、按上傳，或在電腦直接按 Ctrl+V。</p>
 <button class="primary-button" data-open-upload="photo" type="button">上傳圖片</button>
-</div>
 </div>
 </section>
 </section>
@@ -264,7 +252,7 @@
 <h2 id="settings-title">系統設定</h2>
 <p>設定 Google OAuth Client ID 與 Drive 資料夾，瀏覽器會直接透過 Google Drive API 存取資料；下載時會先轉為本機 Blob，不開啟 Google Drive 網址。</p>
 </div>
-<span class="version-pill" id="settings-version-pill">V1.6.1</span>
+<span class="version-pill" id="settings-version-pill">V1.7.0</span>
 </div>
 <section aria-label="系統狀態摘要" class="settings-overview">
 
@@ -280,7 +268,7 @@
 </button>
 <button class="settings-overview-card is-version" data-setting-target="version" type="button">
 <span>應用程式版本</span>
-<strong id="overview-version">V1.6.1</strong>
+<strong id="overview-version">V1.7.0</strong>
 <small id="overview-update-state">自動檢查更新</small>
 </button>
 </section>
@@ -421,10 +409,10 @@
 <div class="setting-body version-control">
 <dl class="definition-grid version-definition-grid">
 <div><dt>應用程式</dt><dd>雲匣 DriveDock</dd></div>
-<div><dt>目前版本</dt><dd id="current-version-value">V1.6.1</dd></div>
+<div><dt>目前版本</dt><dd id="current-version-value">V1.7.0</dd></div>
 <div><dt>最新版本</dt><dd id="latest-version-value">檢查中</dd></div>
 <div><dt>最新建置日期</dt><dd id="build-date-value">2026-07-14</dd></div>
-<div><dt>最新快取版本</dt><dd id="cache-version-value">drivedock-v1.6.1</dd></div>
+<div><dt>最新快取版本</dt><dd id="cache-version-value">drivedock-v1.7.0</dd></div>
 <div><dt>上次檢查</dt><dd id="last-update-check">尚未檢查</dd></div>
 </dl>
 <div aria-live="polite" class="update-status-panel" data-state="checking" id="update-status-panel" role="status">

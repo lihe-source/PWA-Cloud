@@ -1,13 +1,12 @@
 {
-  "version": "1.6.1",
+  "version": "1.7.0",
   "buildDate": "2026-07-14",
-  "cacheName": "drivedock-v1.6.1",
+  "cacheName": "drivedock-v1.7.0",
   "minimumSupportedVersion": "1.0.0",
   "releaseNotes": [
-    "修正 iPhone／慢速網路開啟 PWA 時，Google Identity Services 尚未載入就按登入而顯示錯誤的競態問題。",
-    "Google 授權程式改由應用程式主動預載、監控載入狀態，失敗時可從登入按鈕自動重新下載。",
-    "載入 Google 授權期間暫時停用登入按鈕並顯示載入狀態，避免重複點擊。",
-    "Google 授權程式載入逾時或遭內部網路封鎖時，提供明確的中文錯誤訊息。",
-    "保留 V1.6.0 的 Google Drive API Blob 下載、圖片複製及登入狀態恢復功能。"
+    "相片頁改為更直觀的相簿卡片式版面，直接顯示縮圖、選取框、檔名與上傳時間。",
+    "相片卡片新增預覽、下載與複製操作區，點圖片即可開啟大圖預覽。",
+    "相片頁上方加入快速上傳提示，提醒電腦可用 Ctrl+V、手機可用選擇照片上傳。",
+    "保留 V1.6.1 的 Google 授權服務預載、Google 帳戶記憶、Blob 下載與圖片複製功能。"
   ]
 }
