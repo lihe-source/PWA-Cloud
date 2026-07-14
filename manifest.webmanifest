@@ -14,8 +14,8 @@
     "minimal-ui"
   ],
   "orientation": "any",
-  "background_color": "#f5f0ea",
-  "theme_color": "#efe6db",
+  "background_color": "#fdfbf7",
+  "theme_color": "#fdfbf7",
   "categories": [
     "productivity",
     "utilities"

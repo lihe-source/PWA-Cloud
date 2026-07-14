@@ -24,7 +24,7 @@ const CONFIG = Object.freeze({
 });
 const DEMO_MODE = false;
 const APP_ID = "drivedock";
-const APP_VERSION = String(CONFIG.VERSION || "1.9.0");
+const APP_VERSION = String(CONFIG.VERSION || "2.0.0");
 const APP_BUILD_DATE = String(CONFIG.BUILD_DATE || "2026-07-14");
 const APP_CACHE_NAME = String(CONFIG.CACHE_NAME || `drivedock-v${APP_VERSION}`);
 const VERSION_MANIFEST_URL = "./version.json";
@@ -1272,17 +1272,17 @@ function setSyncStatus(label, status = "checking") {
   dot.classList.toggle("is-offline", status === "offline");
 }
 
-function applyTheme(theme, persist = true) {
-  const next = theme === "light" ? "light" : "dark";
+function applyTheme(_theme, persist = true) {
+  const next = "light";
   document.documentElement.dataset.theme = next;
-  $("meta[name='theme-color']")?.setAttribute("content", next === "dark" ? "#211914" : "#efe6db");
-  $("#theme-toggle").textContent = next === "dark" ? "☼" : "☾";
-  $("#theme-toggle").setAttribute("aria-label", next === "dark" ? "切換亮色模式" : "切換深色模式");
+  $("meta[name='theme-color']")?.setAttribute("content", "#fdfbf7");
+  $("#theme-toggle").textContent = "✎";
+  $("#theme-toggle").setAttribute("aria-label", "手繪紙張主題");
   if (persist) localStorage.setItem("drivedock_theme", next);
 }
 
 function toggleTheme() {
-  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  applyTheme("light");
 }
 
 function isGoogleIdentityReady() {
