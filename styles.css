@@ -5742,7 +5742,7 @@ html[data-theme="dark"] .bottom-nav {
   }
 }
 
-/* V2.6.0：Flat Editorial —— 扁平、緊湊的暖棕編輯介面。 */
+/* V2.7.0：Flat Editorial —— 扁平、緊湊的暖棕編輯介面。 */
 :root {
   --sidebar-width: 204px;
   --topbar-height: 68px;
@@ -6476,7 +6476,7 @@ html[data-theme="light"] .data-table tbody tr:hover {
   }
 }
 
-/* V2.6.0：備註刪除操作 */
+/* V2.7.0：備註刪除操作 */
 .note-table th:first-child,
 .note-table td:first-child {
   width: 78px;
@@ -6520,7 +6520,7 @@ html[data-theme="light"] .data-table tbody tr:hover {
 }
 
 
-/* V2.6.0：強化手機底部懸浮導覽，與頁面內容明顯區隔。 */
+/* V2.7.0：強化手機底部懸浮導覽，與頁面內容明顯區隔。 */
 .bottom-nav {
   isolation: isolate;
 }
@@ -6666,5 +6666,180 @@ html[data-theme="light"] .data-table tbody tr:hover {
   .bottom-nav a {
     min-height: 58px;
     border-radius: 13px;
+  }
+}
+
+/* V2.7.0：粗框 iOS 浮動 Dock + 獨立膠囊分頁按鈕。 */
+@media (max-width: 820px) {
+  main {
+    padding-bottom: calc(126px + var(--safe-bottom));
+  }
+
+  .bottom-nav {
+    right: 10px;
+    bottom: calc(10px + var(--safe-bottom));
+    left: 10px;
+    height: 86px;
+    gap: 7px;
+    padding: 9px;
+    border: 3px solid #7f604b;
+    border-radius: 30px;
+    background: rgb(255 253 249 / 98%);
+    box-shadow:
+      0 16px 0 rgb(111 78 55 / 8%),
+      0 22px 44px rgb(75 52 36 / 24%),
+      inset 0 0 0 2px rgb(255 255 255 / 82%);
+    backdrop-filter: blur(18px) saturate(1.15);
+  }
+
+  .bottom-nav::before {
+    inset: -16px -8px;
+    border-radius: 38px;
+    background: linear-gradient(180deg, rgb(245 238 229 / 0%), rgb(235 224 212 / 94%));
+    opacity: 1;
+  }
+
+  .bottom-nav::after {
+    inset: -5px;
+    border: 1px solid rgb(126 92 68 / 18%);
+    border-radius: 35px;
+    box-shadow: 0 16px 30px rgb(68 47 33 / 18%);
+  }
+
+  html[data-theme="dark"] .bottom-nav {
+    border-color: #b69278;
+    background: rgb(45 34 28 / 98%);
+    box-shadow:
+      0 16px 0 rgb(0 0 0 / 14%),
+      0 22px 44px rgb(0 0 0 / 38%),
+      inset 0 0 0 2px rgb(255 255 255 / 5%);
+  }
+
+  html[data-theme="dark"] .bottom-nav::before {
+    background: linear-gradient(180deg, rgb(19 14 12 / 0%), rgb(34 26 21 / 94%));
+  }
+
+  .bottom-nav a {
+    min-width: 0;
+    min-height: 64px;
+    padding: 6px 4px;
+    gap: 4px;
+    border: 2px solid #d3c0b1;
+    border-radius: 999px;
+    background: #fff;
+    color: #735743;
+    box-shadow: 0 3px 0 rgb(121 88 64 / 12%);
+  }
+
+  .bottom-nav a:not([aria-current="page"]) {
+    border-color: #d8c6b8;
+    background: #fffdfa;
+  }
+
+  html[data-theme="dark"] .bottom-nav a {
+    border-color: #6c5445;
+    background: #382a23;
+    color: #d8c4b4;
+    box-shadow: 0 3px 0 rgb(0 0 0 / 18%);
+  }
+
+  .bottom-nav a[aria-current="page"] {
+    border-color: #8e6548;
+    background: #9a6844;
+    color: #fffaf5;
+    box-shadow:
+      0 4px 0 #6d4932,
+      inset 0 0 0 1px rgb(255 255 255 / 22%);
+    transform: translateY(-3px);
+  }
+
+  html[data-theme="dark"] .bottom-nav a[aria-current="page"] {
+    border-color: #d0a98d;
+    background: #a8734f;
+    color: #fffdfb;
+    box-shadow:
+      0 4px 0 #5c3d2c,
+      inset 0 0 0 1px rgb(255 255 255 / 16%);
+  }
+
+  .bottom-nav a:active {
+    transform: translateY(1px);
+    box-shadow: none;
+  }
+
+  .bottom-nav a[aria-current="page"]:active {
+    transform: translateY(0);
+  }
+
+  .bottom-nav a span {
+    display: grid;
+    width: 30px;
+    height: 26px;
+    place-items: center;
+    border-radius: 999px;
+    background: #f2e7dd;
+    color: #876249;
+    font-size: 17px;
+    line-height: 1;
+  }
+
+  .bottom-nav a[aria-current="page"] span {
+    background: rgb(255 255 255 / 18%);
+    color: inherit;
+  }
+
+  html[data-theme="dark"] .bottom-nav a span {
+    background: #4d3a30;
+    color: #dcc4b2;
+  }
+
+  .bottom-nav a small {
+    max-width: 100%;
+    overflow: hidden;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    line-height: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 620px) {
+  main {
+    padding-bottom: calc(130px + var(--safe-bottom));
+  }
+
+  .bottom-nav {
+    right: 7px;
+    bottom: calc(8px + var(--safe-bottom));
+    left: 7px;
+    height: 84px;
+    gap: 5px;
+    padding: 8px;
+    border-width: 3px;
+    border-radius: 28px;
+  }
+
+  .bottom-nav a {
+    min-height: 62px;
+    padding-inline: 2px;
+  }
+
+  .bottom-nav a span {
+    width: 28px;
+    height: 24px;
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 390px) {
+  .bottom-nav {
+    gap: 4px;
+    padding: 7px;
+  }
+
+  .bottom-nav a small {
+    font-size: 9px;
   }
 }
