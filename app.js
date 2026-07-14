@@ -24,7 +24,7 @@ const CONFIG = Object.freeze({
 });
 const DEMO_MODE = false;
 const APP_ID = "drivedock";
-const APP_VERSION = String(CONFIG.VERSION || "2.2.0");
+const APP_VERSION = String(CONFIG.VERSION || "2.3.0");
 const APP_BUILD_DATE = String(CONFIG.BUILD_DATE || "2026-07-14");
 const APP_CACHE_NAME = String(CONFIG.CACHE_NAME || `drivedock-v${APP_VERSION}`);
 const VERSION_MANIFEST_URL = "./version.json";
@@ -782,6 +782,37 @@ async function updateNote(noteFileId, payload) {
   return noteFromDriveFile(updated);
 }
 
+async function deleteNote(noteFileId) {
+  const metadata = await getDriveMetadata(noteFileId);
+  if (metadata.appProperties?.entity !== "note") {
+    throw makeApiError("指定項目不是備註", 422, "INVALID_NOTE");
+  }
+
+  let attachmentIds = [];
+  try {
+    const blob = await fetchDriveBlob(noteFileId);
+    const content = JSON.parse(await blob.text());
+    attachmentIds = [...new Set(
+      (content.attachmentIds || content.attachments?.map((item) => item.id) || [])
+        .map(String)
+        .filter(Boolean),
+    )].slice(0, 20);
+  } catch {
+    attachmentIds = [];
+  }
+
+  // 先確認備註本身可移到垃圾桶；成功後再清理其附件，避免刪除失敗時先失去附件。
+  await patchDriveMetadata(noteFileId, { trashed: true }, "id,trashed");
+  const attachmentResults = await Promise.allSettled(
+    attachmentIds.map((id) => patchDriveMetadata(id, { trashed: true }, "id,trashed")),
+  );
+  return {
+    id: noteFileId,
+    attachmentCount: attachmentIds.length,
+    attachmentFailures: attachmentResults.filter((result) => result.status === "rejected").length,
+  };
+}
+
 async function storageCandidates(olderThanHours = 168) {
   const threshold = Date.now() - Number(olderThanHours || 168) * 3600000;
   const entities = [
@@ -929,6 +960,7 @@ async function api(path, options = {}) {
   if (pathname === "/api/notes" && method === "POST") return { note: await createNote(body) };
   const noteMatch = pathname.match(/^\/api\/notes\/([^/]+)$/);
   if (noteMatch && method === "PATCH") return { note: await updateNote(decodeURIComponent(noteMatch[1]), body) };
+  if (noteMatch && method === "DELETE") return { result: await deleteNote(decodeURIComponent(noteMatch[1])) };
 
   throw makeApiError(`不支援的前端 API 路徑：${pathname}`, 404, "UNSUPPORTED_ROUTE");
 }
@@ -994,6 +1026,7 @@ const state = {
   noteAttachments: [],
   noteExistingAttachments: [],
   noteReadOnly: false,
+  deletingNoteIds: new Set(),
   viewerPhoto: null,
   viewerPhotoPngBlob: null,
   photoPngCache: new Map(),
@@ -2413,15 +2446,33 @@ function renderNotes() {
   const fragment = document.createDocumentFragment();
   notes.forEach((note) => {
     const row = make("tr");
-    const editTd = make("td");
-    editTd.dataset.label = "編輯";
+    const actionTd = make("td", "note-actions-cell");
+    actionTd.dataset.label = "操作";
+    const actions = make("div", "note-row-actions");
+
     const edit = make("button", "row-action", "✎");
     edit.type = "button";
-    edit.disabled = !note.permissions.canEdit;
-    edit.title = edit.disabled ? "只有備註作者或管理員可以編輯" : `編輯 ${note.title}`;
+    edit.disabled = !note.permissions.canEdit || state.deletingNoteIds.has(note.id);
+    edit.title = edit.disabled && !state.deletingNoteIds.has(note.id)
+      ? "只有備註作者或管理員可以編輯"
+      : `編輯 ${note.title}`;
     edit.setAttribute("aria-label", edit.title);
     edit.addEventListener("click", () => openNoteModal(note, false));
-    editTd.append(edit);
+
+    const deleting = state.deletingNoteIds.has(note.id);
+    const remove = make("button", "row-action note-delete-action", deleting ? "…" : "刪");
+    remove.type = "button";
+    remove.disabled = !note.permissions.canDelete || deleting || !navigator.onLine;
+    remove.title = !note.permissions.canDelete
+      ? "只有具備刪除權限的使用者可以刪除此備註"
+      : deleting
+        ? `正在刪除 ${note.title}`
+        : `刪除 ${note.title}`;
+    remove.setAttribute("aria-label", remove.title);
+    remove.addEventListener("click", () => handleDeleteNote(note, remove));
+
+    actions.append(edit, remove);
+    actionTd.append(actions);
 
     const titleTd = make("td");
     titleTd.dataset.label = "標題名稱";
@@ -2448,13 +2499,13 @@ function renderNotes() {
       link.type = "button";
       link.title = `下載 ${attachment.name} · ${formatBytes(attachment.sizeBytes)}`;
       link.setAttribute("aria-label", link.title);
-      link.disabled = state.downloadingIds.has(attachment.id) || !navigator.onLine;
+      link.disabled = state.downloadingIds.has(attachment.id) || !navigator.onLine || deleting;
       link.append(make("span", "", state.downloadingIds.has(attachment.id) ? `↓ 下載中：${attachment.name}` : `↓ ${attachment.name}`));
       link.addEventListener("click", () => downloadDriveItem(attachment, link));
       links.append(link);
     });
     attachmentsTd.append(links);
-    row.append(editTd, titleTd, uploaderTd, timeTd, attachmentsTd);
+    row.append(actionTd, titleTd, uploaderTd, timeTd, attachmentsTd);
     fragment.append(row);
   });
   body.replaceChildren(fragment);
@@ -2464,6 +2515,64 @@ function renderNotes() {
   $("#note-attachment-count").textContent = String(notes.filter((note) => note.attachments.length > 0).length);
   $("#note-empty").hidden = notes.length > 0;
   $(".note-table").hidden = notes.length === 0;
+}
+
+async function handleDeleteNote(note, trigger = null) {
+  if (!note?.id || state.deletingNoteIds.has(note.id)) return;
+  if (!note.permissions?.canDelete) {
+    showToast("目前帳戶沒有刪除此備註的權限", "error");
+    return;
+  }
+  if (!navigator.onLine) {
+    showToast("目前離線，無法刪除備註", "error");
+    return;
+  }
+
+  const attachmentMessage = note.attachments.length
+    ? `\n此備註的 ${note.attachments.length} 個附件也會一併移到垃圾桶。`
+    : "";
+  if (!confirm(`確定要刪除備註「${note.title}」嗎？${attachmentMessage}\n可稍後從 Google Drive 垃圾桶復原。`)) return;
+
+  state.deletingNoteIds.add(note.id);
+  renderNotes();
+  const modalDelete = $("#delete-note-modal");
+  if (modalDelete && $("#note-id")?.value === note.id) {
+    modalDelete.disabled = true;
+    modalDelete.textContent = "刪除中…";
+  }
+  if (trigger) trigger.disabled = true;
+
+  try {
+    let attachmentFailures = 0;
+    if (DEMO_MODE) {
+      state.notes = state.notes.filter((item) => item.id !== note.id);
+    } else {
+      const response = await api(`/api/notes/${encodeURIComponent(note.id)}`, { method: "DELETE" });
+      attachmentFailures = Number(response.result?.attachmentFailures || 0);
+      state.notes = state.notes.filter((item) => item.id !== note.id);
+      state.notesLoaded = false;
+    }
+
+    if (!$("#note-modal").hidden && $("#note-id").value === note.id) closeModal($("#note-modal"));
+    renderNotes();
+    if (!DEMO_MODE) await loadNotes(true);
+    showToast(
+      attachmentFailures
+        ? `備註已刪除，但有 ${attachmentFailures} 個附件無法移到垃圾桶`
+        : "備註與所屬附件已移到 Google Drive 垃圾桶",
+      attachmentFailures ? "error" : "success",
+    );
+  } catch (error) {
+    showToast(`備註刪除失敗：${error.message}`, "error");
+  } finally {
+    state.deletingNoteIds.delete(note.id);
+    if (modalDelete) {
+      modalDelete.textContent = "刪除備註";
+      const current = state.notes.find((item) => item.id === $("#note-id")?.value);
+      modalDelete.disabled = !current?.permissions?.canDelete || !navigator.onLine;
+    }
+    renderNotes();
+  }
 }
 
 async function loadNotes(force = false) {
@@ -2512,6 +2621,11 @@ function openNoteModal(note = null, readOnly = false) {
   $("#note-attachment-input").disabled = effectiveReadOnly;
   $(".attachment-picker", $("#note-modal")).hidden = effectiveReadOnly;
   $("#note-form button[type='submit']").hidden = effectiveReadOnly;
+  const deleteButton = $("#delete-note-modal");
+  deleteButton.hidden = !note;
+  deleteButton.disabled = !note?.permissions?.canDelete || !navigator.onLine || state.deletingNoteIds.has(note?.id);
+  deleteButton.textContent = state.deletingNoteIds.has(note?.id) ? "刪除中…" : "刪除備註";
+  deleteButton.title = note?.permissions?.canDelete ? `刪除 ${note.title}` : "目前帳戶沒有刪除此備註的權限";
   $("#note-modal-title").textContent = note ? (effectiveReadOnly ? "檢視備註" : "編輯備註") : "新增備註";
   renderNoteAttachments();
   openModal("note-modal", effectiveReadOnly ? $("#note-content-input") : $("#note-title-input"));
@@ -3593,6 +3707,10 @@ function initializeEvents() {
   $("#add-note").addEventListener("click", () => openNoteModal());
   $("#refresh-notes").addEventListener("click", () => loadNotes(true));
   $("#note-form").addEventListener("submit", handleNoteSubmit);
+  $("#delete-note-modal").addEventListener("click", () => {
+    const note = state.notes.find((item) => item.id === $("#note-id").value);
+    if (note) handleDeleteNote(note, $("#delete-note-modal"));
+  });
   $("#note-attachment-input").addEventListener("change", (event) => addNoteAttachments(event.target.files));
 
   $("#refresh-photos").addEventListener("click", () => loadPhotos(true));

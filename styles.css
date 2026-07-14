@@ -5742,7 +5742,7 @@ html[data-theme="dark"] .bottom-nav {
   }
 }
 
-/* V2.2.0：Flat Editorial —— 扁平、緊湊的暖棕編輯介面。 */
+/* V2.3.0：Flat Editorial —— 扁平、緊湊的暖棕編輯介面。 */
 :root {
   --sidebar-width: 204px;
   --topbar-height: 68px;
@@ -6473,5 +6473,48 @@ html[data-theme="light"] .data-table tbody tr:hover {
 @media (max-width: 410px) {
   .photo-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* V2.3.0：備註刪除操作 */
+.note-table th:first-child,
+.note-table td:first-child {
+  width: 78px;
+  min-width: 78px;
+}
+
+.note-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.note-delete-action {
+  border-color: color-mix(in srgb, #b94935 42%, var(--line));
+  color: #a23a2a;
+}
+
+.note-delete-action:hover:not(:disabled) {
+  border-color: #a23a2a;
+  background: color-mix(in srgb, #b94935 10%, var(--panel));
+  color: #8f2f22;
+}
+
+#delete-note-modal {
+  margin-right: auto;
+}
+
+@media (max-width: 620px) {
+  .note-row-actions {
+    justify-content: flex-end;
+  }
+
+  .note-table td:first-child {
+    min-width: 70px !important;
+  }
+
+  #delete-note-modal {
+    width: 100%;
+    margin-right: 0;
   }
 }

@@ -1,8 +1,8 @@
-# 雲匣 DriveDock V2.2.0
+# 雲匣 DriveDock V2.3.0
 
-> V2.2.0 延續 V2.1.0 的暖棕「雅致編輯」風格，將按鈕、表格、卡片、設定區與導覽全面扁平化並壓縮留白，讓單一畫面能顯示更多資料。
+> V2.3.0 在扁平緊湊的暖棕「雅致編輯」介面上，新增完整的備註刪除流程。
 
-DriveDock 是一套可安裝在 iPhone、Android 與桌面瀏覽器的 PWA 檔案櫃。V2.2.0 採用 **GitHub Pages 純前端架構**：使用 Google Identity Services 取得短效 Access Token，再由瀏覽器直接呼叫 Google Drive REST API。此版重點為暖棕米白的雅致編輯介面改版，並保留內網相容的 Blob 下載、相片卡片、iPhone 圖片複製與登入狀態恢復。
+DriveDock 是一套可安裝在 iPhone、Android 與桌面瀏覽器的 PWA 檔案櫃。V2.3.0 採用 **GitHub Pages 純前端架構**：使用 Google Identity Services 取得短效 Access Token，再由瀏覽器直接呼叫 Google Drive REST API。本版新增備註單筆刪除與附件一併移至垃圾桶的流程，並保留扁平緊湊介面、Blob 下載、相片卡片、iPhone 圖片複製與登入狀態恢復。
 
 ```text
 GitHub Pages PWA
@@ -22,13 +22,14 @@ Google Drive API
 - Service Account JSON
 
 
-## V2.2.0：扁平化與緊湊版面
+## V2.3.0：備註刪除
 
 
-- 預設採暖棕、米白與紙張質感，建立雅致且沉穩的編輯風格。
-- 標題、頁面主標與重點數字使用 Newsreader；按鈕、欄位、表格及內文使用 Outfit。
-- 頁首、主視覺、摘要資訊、列表、設定卡片與手機底部導覽維持緊湊排版。
-- 表格、相片卡片、按鈕、欄位、彈窗及明暗模式皆同步套用暖棕色視覺系統。
+- 備註列表的「操作」欄提供編輯與刪除按鈕。
+- 備註編輯／檢視視窗內也可直接刪除目前備註。
+- 僅在登入帳戶具有 Google Drive 刪除權限時開放刪除。
+- 刪除備註時，其所屬附件會一併移到 Google Drive 垃圾桶。
+- 刪除前會再次確認，刪除期間鎖定按鈕並顯示處理狀態。
 
 ### 下載相容性
 - 檔案、照片與備註附件不再以 `drive.google.com` 的 `webViewLink` 開啟。
@@ -44,7 +45,7 @@ Google Drive API
 - 多檔上傳，單檔上限 500 MB，8 MB 分段可續傳。
 - 檔案重新命名、批次移到 Google Drive 垃圾桶。
 - 相片預覽、篩選、批次刪除與 iPhone 相容的圖片複製。
-- 備註以 JSON 檔案保存，可加入多個附件。
+- 備註以 JSON 檔案保存，可加入多個附件，並支援單筆編輯與刪除。
 - 深色／淺色模式、PWA 安裝、離線 App Shell。
 - 啟動時自動檢查版本，也可手動檢查及更新。
 - 相容 V1.3.0／V1.4.0 使用相同 `appProperties` 建立的檔案、相片、備註與附件。
@@ -182,7 +183,7 @@ Client ID、Folder ID、已登入帳號與尚未過期的短效 Access Token 會
 
 ## Google Drive 權限
 
-V2.2.0 使用完整 Google Drive scope，才能直接存取使用者貼入的既有 Folder ID、共享資料夾及 V1.3.0 已建立的資料。Google OAuth 可能顯示較廣泛的 Drive 授權說明。
+V2.3.0 使用完整 Google Drive scope，才能直接存取使用者貼入的既有 Folder ID、共享資料夾及 V1.3.0 已建立的資料。Google OAuth 可能顯示較廣泛的 Drive 授權說明。
 
 請確認：
 
@@ -201,7 +202,7 @@ V2.2.0 使用完整 Google Drive scope，才能直接存取使用者貼入的既
 
 ## 相片複製
 
-V2.2.0 的相片複製流程會：
+V2.3.0 的相片複製流程會：
 
 1. 開啟預覽時，先使用目前 Google Access Token 從 Drive 讀取原始圖片。
 2. 預先將圖片轉成 PNG，並暫存在記憶體快取。
@@ -227,7 +228,7 @@ V2.2.0 的相片複製流程會：
 目前版本：
 
 ```text
-V2.2.0
+V2.3.0
 ```
 
 程式啟動時會讀取 `version.json`。發現新版本時，會更新 Service Worker、清除舊的 DriveDock Cache Storage，並重新載入。
