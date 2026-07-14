@@ -1,13 +1,13 @@
 {
-  "version": "2.3.0",
+  "version": "2.5.0",
   "buildDate": "2026-07-14",
-  "cacheName": "drivedock-v2.3.0",
+  "cacheName": "drivedock-v2.5.0",
   "minimumSupportedVersion": "1.0.0",
   "releaseNotes": [
-    "備註列表新增單筆刪除按鈕，並依 Google Drive 權限決定是否開放操作。",
-    "備註編輯與檢視視窗新增刪除備註按鈕，可直接從目前開啟的備註執行刪除。",
-    "刪除前會顯示確認訊息；備註與其所屬附件會一併移到 Google Drive 垃圾桶，可從垃圾桶復原。",
-    "刪除期間會鎖定該筆操作並顯示處理狀態，避免重複提交。",
-    "保留 V2.2.0 的扁平緊湊版面、Google 帳戶記憶、Blob 下載、圖片複製與版本更新功能。"
+    "新增與 App Icon 同風格的 favicon，支援 16、32、48 像素及多尺寸 favicon.ico。",
+    "新增 iOS 152 與 180 像素 Home Screen 圖示，改善加入主畫面後的圖示清晰度。",
+    "新增常見 iPhone 與 iPad 直向啟動畫面，包含 iPhone 15 Pro Max 與新款尺寸。",
+    "擴充 PWA manifest 圖示尺寸，加入 96、128、144、152、384 與 maskable 192 資源。",
+    "保留 V2.4.0 的新 App Icon、備註刪除、Blob 下載與 Google 帳戶記憶功能。"
   ]
 }

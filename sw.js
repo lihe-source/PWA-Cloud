@@ -1,4 +1,4 @@
-const CACHE_NAME = "drivedock-v2.3.0";
+const CACHE_NAME = "drivedock-v2.5.0";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -10,6 +10,35 @@ const APP_SHELL = [
   "./icon-192.png",
   "./icon-512.png",
   "./icon-maskable-512.png",
+  "./icon-maskable-192.png",
+  "./icon-96.png",
+  "./icon-128.png",
+  "./icon-144.png",
+  "./icon-384.png",
+  "./apple-touch-icon.png",
+  "./apple-touch-icon-152.png",
+  "./favicon.ico",
+  "./favicon-16.png",
+  "./favicon-32.png",
+  "./favicon-48.png",
+  "./splash-640x1136.png",
+  "./splash-750x1334.png",
+  "./splash-828x1792.png",
+  "./splash-1125x2436.png",
+  "./splash-1170x2532.png",
+  "./splash-1179x2556.png",
+  "./splash-1206x2622.png",
+  "./splash-1242x2208.png",
+  "./splash-1242x2688.png",
+  "./splash-1284x2778.png",
+  "./splash-1290x2796.png",
+  "./splash-1320x2868.png",
+  "./splash-1536x2048.png",
+  "./splash-1620x2160.png",
+  "./splash-1640x2360.png",
+  "./splash-1668x2224.png",
+  "./splash-1668x2388.png",
+  "./splash-2048x2732.png",
 ];
 
 self.addEventListener("install", (event) => {

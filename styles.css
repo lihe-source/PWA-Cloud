@@ -5742,7 +5742,7 @@ html[data-theme="dark"] .bottom-nav {
   }
 }
 
-/* V2.3.0：Flat Editorial —— 扁平、緊湊的暖棕編輯介面。 */
+/* V2.5.0：Flat Editorial —— 扁平、緊湊的暖棕編輯介面。 */
 :root {
   --sidebar-width: 204px;
   --topbar-height: 68px;
@@ -6476,7 +6476,7 @@ html[data-theme="light"] .data-table tbody tr:hover {
   }
 }
 
-/* V2.3.0：備註刪除操作 */
+/* V2.5.0：備註刪除操作 */
 .note-table th:first-child,
 .note-table td:first-child {
   width: 78px;
