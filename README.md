@@ -1,8 +1,8 @@
-# 雲匣 DriveDock V2.1.0
+# 雲匣 DriveDock V2.2.0
 
-> V2.1.0 完整還原 V1.9.0 的「雅致編輯」風格與功能，移除 V2.0.0 手繪介面覆寫；以暖棕與米白為主色，Newsreader 用於標題與重點文字，Outfit 用於操作介面與內文。
+> V2.2.0 延續 V2.1.0 的暖棕「雅致編輯」風格，將按鈕、表格、卡片、設定區與導覽全面扁平化並壓縮留白，讓單一畫面能顯示更多資料。
 
-DriveDock 是一套可安裝在 iPhone、Android 與桌面瀏覽器的 PWA 檔案櫃。V2.1.0 採用 **GitHub Pages 純前端架構**：使用 Google Identity Services 取得短效 Access Token，再由瀏覽器直接呼叫 Google Drive REST API。此版重點為暖棕米白的雅致編輯介面改版，並保留內網相容的 Blob 下載、相片卡片、iPhone 圖片複製與登入狀態恢復。
+DriveDock 是一套可安裝在 iPhone、Android 與桌面瀏覽器的 PWA 檔案櫃。V2.2.0 採用 **GitHub Pages 純前端架構**：使用 Google Identity Services 取得短效 Access Token，再由瀏覽器直接呼叫 Google Drive REST API。此版重點為暖棕米白的雅致編輯介面改版，並保留內網相容的 Blob 下載、相片卡片、iPhone 圖片複製與登入狀態恢復。
 
 ```text
 GitHub Pages PWA
@@ -22,7 +22,7 @@ Google Drive API
 - Service Account JSON
 
 
-## V2.1.0：還原 V1.9.0 雅致編輯介面
+## V2.2.0：扁平化與緊湊版面
 
 
 - 預設採暖棕、米白與紙張質感，建立雅致且沉穩的編輯風格。
@@ -182,7 +182,7 @@ Client ID、Folder ID、已登入帳號與尚未過期的短效 Access Token 會
 
 ## Google Drive 權限
 
-V2.1.0 使用完整 Google Drive scope，才能直接存取使用者貼入的既有 Folder ID、共享資料夾及 V1.3.0 已建立的資料。Google OAuth 可能顯示較廣泛的 Drive 授權說明。
+V2.2.0 使用完整 Google Drive scope，才能直接存取使用者貼入的既有 Folder ID、共享資料夾及 V1.3.0 已建立的資料。Google OAuth 可能顯示較廣泛的 Drive 授權說明。
 
 請確認：
 
@@ -201,7 +201,7 @@ V2.1.0 使用完整 Google Drive scope，才能直接存取使用者貼入的既
 
 ## 相片複製
 
-V2.1.0 的相片複製流程會：
+V2.2.0 的相片複製流程會：
 
 1. 開啟預覽時，先使用目前 Google Access Token 從 Drive 讀取原始圖片。
 2. 預先將圖片轉成 PNG，並暫存在記憶體快取。
@@ -227,7 +227,7 @@ V2.1.0 的相片複製流程會：
 目前版本：
 
 ```text
-V2.1.0
+V2.2.0
 ```
 
 程式啟動時會讀取 `version.json`。發現新版本時，會更新 Service Worker、清除舊的 DriveDock Cache Storage，並重新載入。
