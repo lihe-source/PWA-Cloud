@@ -3649,7 +3649,7 @@ body.modal-open {
   }
 }
 
-/* v1.6.0：以 Google Drive API 取回 Blob，再由瀏覽器建立本機下載。 */
+/* v1.6.1：以 Google Drive API 取回 Blob，再由瀏覽器建立本機下載。 */
 .file-name-download {
   display: block;
   max-width: 360px;

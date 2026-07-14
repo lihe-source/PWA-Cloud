@@ -1,14 +1,13 @@
 {
-  "version": "1.6.0",
+  "version": "1.6.1",
   "buildDate": "2026-07-14",
-  "cacheName": "drivedock-v1.6.0",
+  "cacheName": "drivedock-v1.6.1",
   "minimumSupportedVersion": "1.0.0",
   "releaseNotes": [
-    "檔案下載改為透過已登入帳戶的 Google Drive API 取得 Blob，再建立本機 Blob URL 下載，不再開啟 drive.google.com 網址。",
-    "檔案表格新增獨立下載欄位，點擊檔名也可直接下載。",
-    "照片列表與照片預覽新增下載按鈕。",
-    "備註附件改為 API Blob 下載，並在備註編輯視窗提供附件下載按鈕。",
-    "下載期間顯示處理狀態，避免重複點擊；iOS PWA 延後釋放 Blob URL，降低下載尚未建立就失效的情況。",
-    "保留 V1.5.0 的圖片複製修正與 Google 帳戶登入保持機制。"
+    "修正 iPhone／慢速網路開啟 PWA 時，Google Identity Services 尚未載入就按登入而顯示錯誤的競態問題。",
+    "Google 授權程式改由應用程式主動預載、監控載入狀態，失敗時可從登入按鈕自動重新下載。",
+    "載入 Google 授權期間暫時停用登入按鈕並顯示載入狀態，避免重複點擊。",
+    "Google 授權程式載入逾時或遭內部網路封鎖時，提供明確的中文錯誤訊息。",
+    "保留 V1.6.0 的 Google Drive API Blob 下載、圖片複製及登入狀態恢復功能。"
   ]
 }

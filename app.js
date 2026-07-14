@@ -24,13 +24,16 @@ const CONFIG = Object.freeze({
 });
 const DEMO_MODE = false;
 const APP_ID = "drivedock";
-const APP_VERSION = String(CONFIG.VERSION || "1.6.0");
+const APP_VERSION = String(CONFIG.VERSION || "1.6.1");
 const APP_BUILD_DATE = String(CONFIG.BUILD_DATE || "2026-07-14");
 const APP_CACHE_NAME = String(CONFIG.CACHE_NAME || `drivedock-v${APP_VERSION}`);
 const VERSION_MANIFEST_URL = "./version.json";
 const DRIVE_API_BASE = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD_BASE = "https://www.googleapis.com/upload/drive/v3";
 const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";
+const GOOGLE_IDENTITY_SCRIPT_URL = "https://accounts.google.com/gsi/client";
+const GOOGLE_IDENTITY_LOAD_TIMEOUT_MS = 20000;
+let googleIdentityLoadPromise = null;
 const GOOGLE_OAUTH_SCOPE = [
   "openid",
   "email",
@@ -966,6 +969,8 @@ const state = {
   authNeedsReconnect: false,
   authRequestInFlight: false,
   authRefreshGestureBound: false,
+  googleIdentityStatus: "idle",
+  googleIdentityError: "",
   files: [],
   photos: [],
   notes: [],
@@ -1280,10 +1285,106 @@ function toggleTheme() {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 }
 
+function isGoogleIdentityReady() {
+  return Boolean(globalThis.google?.accounts?.oauth2?.initTokenClient);
+}
+
+function googleIdentityStatusLabel() {
+  if (isGoogleIdentityReady() || state.googleIdentityStatus === "ready") return "Google 授權服務已就緒";
+  if (state.googleIdentityStatus === "loading") return "正在載入 Google 授權服務…";
+  if (state.googleIdentityStatus === "error") return "Google 授權服務載入失敗，點登入可重試";
+  return "Google 授權服務尚未載入";
+}
+
+function loadGoogleIdentityServices({ forceReload = false } = {}) {
+  if (isGoogleIdentityReady()) {
+    state.googleIdentityStatus = "ready";
+    state.googleIdentityError = "";
+    return Promise.resolve(globalThis.google.accounts.oauth2);
+  }
+  if (googleIdentityLoadPromise && !forceReload) return googleIdentityLoadPromise;
+
+  if (forceReload) {
+    document.querySelectorAll('script[data-google-identity-services="true"]').forEach((script) => script.remove());
+    googleIdentityLoadPromise = null;
+  }
+
+  state.googleIdentityStatus = "loading";
+  state.googleIdentityError = "";
+  renderAccount();
+
+  googleIdentityLoadPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-google-identity-services="true"]');
+    const script = existing || document.createElement("script");
+    let settled = false;
+    let pollTimer = 0;
+    let timeoutTimer = 0;
+
+    const cleanup = () => {
+      clearInterval(pollTimer);
+      clearTimeout(timeoutTimer);
+      script.removeEventListener("load", handleLoad);
+      script.removeEventListener("error", handleError);
+    };
+    const succeed = () => {
+      if (settled || !isGoogleIdentityReady()) return;
+      settled = true;
+      cleanup();
+      resolve(globalThis.google.accounts.oauth2);
+    };
+    const fail = (message) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error(message));
+    };
+    const handleLoad = () => {
+      if (isGoogleIdentityReady()) succeed();
+      else fail("Google 授權程式已下載，但初始化資料不完整");
+    };
+    const handleError = () => fail("無法下載 Google 授權程式，請確認網路或內部網站限制");
+
+    script.addEventListener("load", handleLoad, { once: true });
+    script.addEventListener("error", handleError, { once: true });
+    if (!existing) {
+      script.dataset.googleIdentityServices = "true";
+      script.src = `${GOOGLE_IDENTITY_SCRIPT_URL}${forceReload ? `?retry=${Date.now()}` : ""}`;
+      script.async = true;
+      script.defer = true;
+      script.referrerPolicy = "no-referrer-when-downgrade";
+      document.head.append(script);
+    }
+
+    pollTimer = window.setInterval(succeed, 100);
+    timeoutTimer = window.setTimeout(
+      () => fail("Google 授權服務載入逾時，請確認 accounts.google.com 未被封鎖"),
+      GOOGLE_IDENTITY_LOAD_TIMEOUT_MS,
+    );
+    succeed();
+  })
+    .then((oauth2) => {
+      state.googleIdentityStatus = "ready";
+      state.googleIdentityError = "";
+      renderAccount();
+      initializeGoogleSignIn(0, true);
+      return oauth2;
+    })
+    .catch((error) => {
+      state.googleIdentityStatus = "error";
+      state.googleIdentityError = error.message || String(error);
+      googleIdentityLoadPromise = null;
+      renderAccount();
+      throw error;
+    });
+
+  return googleIdentityLoadPromise;
+}
+
 function renderAccount() {
   const user = state.user;
   const authorized = hasDriveSession();
   const remembered = Boolean(user && !authorized);
+  const identityLoading = state.googleIdentityStatus === "loading" && !isGoogleIdentityReady();
   const avatar = $("#account-avatar");
   avatar.replaceChildren();
   if (user?.picture) {
@@ -1298,13 +1399,22 @@ function renderAccount() {
   $("#account-name").textContent = user?.name || "Google 帳戶";
   $("#account-status").textContent = authorized
     ? "Drive 已授權"
+    : identityLoading
+      ? "正在載入 Google 授權服務…"
+      : remembered
+        ? "帳號已記住，點一下恢復連線"
+        : state.googleClientId
+          ? "點此連接 Google"
+          : "尚未設定 Client ID";
+  const signInButton = $("#google-signin");
+  signInButton.hidden = authorized;
+  signInButton.disabled = identityLoading || !navigator.onLine;
+  signInButton.textContent = identityLoading
+    ? "正在載入 Google…"
     : remembered
-      ? "帳號已記住，點一下恢復連線"
-      : state.googleClientId
-        ? "點此連接 Google"
-        : "尚未設定 Client ID";
-  $("#google-signin").hidden = authorized;
-  $("#google-signin").textContent = remembered ? "恢復 Google 連線" : "使用 Google 登入";
+      ? "恢復 Google 連線"
+      : "使用 Google 登入";
+  signInButton.title = googleIdentityStatusLabel();
   $("#google-signout").hidden = !user;
   $("#auth-setting-state").textContent = authorized ? "已授權" : remembered ? "已記住" : "未登入";
   $("#scan-storage").disabled = !authorized || !currentFolderId() || !navigator.onLine;
@@ -1402,13 +1512,9 @@ async function finishGoogleAuthorization(response) {
 
 function initializeGoogleSignIn(attempt = 0, force = false) {
   const clientId = normalizeGoogleClientId(state.googleClientId || directSettings().googleClientId || CONFIG.GOOGLE_CLIENT_ID);
-  if (!clientId || !isValidGoogleClientId(clientId)) return;
-  if (!globalThis.google?.accounts?.oauth2) {
-    if (attempt < 60) setTimeout(() => initializeGoogleSignIn(attempt + 1, force), 250);
-    return;
-  }
-  if (!force && state.tokenClient && state.tokenClientId === clientId) return;
-  state.tokenClient = google.accounts.oauth2.initTokenClient({
+  if (!clientId || !isValidGoogleClientId(clientId) || !isGoogleIdentityReady()) return false;
+  if (!force && state.tokenClient && state.tokenClientId === clientId) return true;
+  state.tokenClient = globalThis.google.accounts.oauth2.initTokenClient({
     client_id: clientId,
     scope: GOOGLE_OAUTH_SCOPE,
     callback: (response) => {
@@ -1430,10 +1536,15 @@ function initializeGoogleSignIn(attempt = 0, force = false) {
   });
   state.tokenClientId = clientId;
   state.googleSignInClientId = clientId;
+  state.googleIdentityStatus = "ready";
+  state.googleIdentityError = "";
   renderAccount();
+  return true;
 }
 
-function requestGoogleSignIn({ forceConsent = false, quiet = false } = {}) {
+async function requestGoogleSignIn(options = {}) {
+  const forceConsent = options?.forceConsent === true;
+  const quiet = options?.quiet === true;
   const clientId = normalizeGoogleClientId(state.googleClientId || directSettings().googleClientId || CONFIG.GOOGLE_CLIENT_ID);
   if (!isValidGoogleClientId(clientId)) {
     if (!quiet) {
@@ -1442,9 +1553,24 @@ function requestGoogleSignIn({ forceConsent = false, quiet = false } = {}) {
     }
     return false;
   }
+  if (!navigator.onLine) {
+    if (!quiet) showToast("目前離線，無法開啟 Google 授權", "error");
+    return false;
+  }
+
+  if (!isGoogleIdentityReady()) {
+    if (!quiet) showToast("正在載入 Google 授權服務…");
+    try {
+      await loadGoogleIdentityServices({ forceReload: state.googleIdentityStatus === "error" });
+    } catch (error) {
+      if (!quiet) showToast(`Google 授權服務載入失敗：${error.message}`, "error");
+      return false;
+    }
+  }
+
   initializeGoogleSignIn(0, true);
   if (!state.tokenClient) {
-    if (!quiet) showToast("Google 授權服務尚未載入，請稍後重試", "error");
+    if (!quiet) showToast("Google 授權服務初始化失敗，請重新整理後再試", "error");
     return false;
   }
   if (state.authRequestInFlight) return true;
@@ -1455,7 +1581,12 @@ function requestGoogleSignIn({ forceConsent = false, quiet = false } = {}) {
     return true;
   } catch (error) {
     state.authRequestInFlight = false;
-    if (!quiet) showToast(`無法開啟 Google 授權：${error.message}`, "error");
+    if (!quiet) {
+      const message = /popup|gesture|allowed/i.test(String(error?.message || ""))
+        ? "Google 授權服務已載入，請再按一次「使用 Google 登入」"
+        : `無法開啟 Google 授權：${error.message}`;
+      showToast(message, "error");
+    }
     return false;
   }
 }
@@ -1472,7 +1603,7 @@ function maybeRefreshAuthorizationFromGesture(event) {
 async function signOut() {
   const token = state.accessToken;
   if (token && globalThis.google?.accounts?.oauth2?.revoke) {
-    await new Promise((resolve) => google.accounts.oauth2.revoke(token, resolve));
+    await new Promise((resolve) => globalThis.google.accounts.oauth2.revoke(token, resolve));
   }
   if (state.photoObjectUrl) URL.revokeObjectURL(state.photoObjectUrl);
   state.photoObjectUrl = "";
@@ -3073,10 +3204,16 @@ function renderGoogleSetup() {
   card.classList.remove("is-readonly");
   clientInput.disabled = state.googleSetupBusy;
   folderInput.disabled = state.googleSetupBusy;
+  const identityLoading = state.googleIdentityStatus === "loading" && !isGoogleIdentityReady();
   saveButton.disabled = state.googleSetupBusy || !state.user || !online;
   loginButton.hidden = hasDriveSession();
-  loginButton.disabled = state.googleSetupBusy || !online;
-  loginButton.textContent = state.user ? "恢復 Google 連線" : "儲存設定並登入";
+  loginButton.disabled = state.googleSetupBusy || identityLoading || !online;
+  loginButton.textContent = identityLoading
+    ? "正在載入 Google…"
+    : state.user
+      ? "恢復 Google 連線"
+      : "儲存設定並登入";
+  loginButton.title = googleIdentityStatusLabel();
   saveButton.textContent = "驗證並儲存";
 
   if (!state.googleSetupDirty) {
@@ -3509,6 +3646,7 @@ function initializeEvents() {
 
 async function initialize() {
   applyTheme(localStorage.getItem("drivedock_theme") || "dark", false);
+  void loadGoogleIdentityServices().catch(() => null);
   const hint = readLocalJson("drivedock_profile_hint", null);
   if (hint?.name) {
     $("#account-name").textContent = hint.name;
