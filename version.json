@@ -1,13 +1,12 @@
 {
-  "version": "2.5.0",
+  "version": "2.6.0",
   "buildDate": "2026-07-14",
-  "cacheName": "drivedock-v2.5.0",
+  "cacheName": "drivedock-v2.6.0",
   "minimumSupportedVersion": "1.0.0",
   "releaseNotes": [
-    "新增與 App Icon 同風格的 favicon，支援 16、32、48 像素及多尺寸 favicon.ico。",
-    "新增 iOS 152 與 180 像素 Home Screen 圖示，改善加入主畫面後的圖示清晰度。",
-    "新增常見 iPhone 與 iPad 直向啟動畫面，包含 iPhone 15 Pro Max 與新款尺寸。",
-    "擴充 PWA manifest 圖示尺寸，加入 96、128、144、152、384 與 maskable 192 資源。",
-    "保留 V2.4.0 的新 App Icon、備註刪除、Blob 下載與 Google 帳戶記憶功能。"
+    "重新設計手機底部懸浮導覽，讓檔案、備註、相片、設定與後方頁面內容更明顯區隔。",
+    "加強底部導覽外框、背景、不透明度與陰影，並讓每個分頁按鈕更清楚獨立。",
+    "增加頁面底部留白，避免底部懸浮導覽與內容視覺重疊。",
+    "保留 V2.5.0 的 App icon、favicon、啟動畫面與既有所有功能。"
   ]
 }
