@@ -1,8 +1,8 @@
-# 雲匣 DriveDock V2.0.0
+# 雲匣 DriveDock V2.1.0
 
-> V2.0.0 將整套介面重構為 Hand-Drawn 手繪草圖風格：紙張底紋、鉛筆粗框、修正紅、原子筆藍、不規則邊角與硬位移陰影。
+> V2.1.0 完整還原 V1.9.0 的「雅致編輯」風格與功能，移除 V2.0.0 手繪介面覆寫；以暖棕與米白為主色，Newsreader 用於標題與重點文字，Outfit 用於操作介面與內文。
 
-DriveDock 是一套可安裝在 iPhone、Android 與桌面瀏覽器的 PWA 檔案櫃。V2.0.0 採用 **GitHub Pages 純前端架構**，並新增集中式 `handdrawn-theme.css` 設計系統，在不改動資料與 Google Drive 流程的前提下，完成全站手繪視覺重構。
+DriveDock 是一套可安裝在 iPhone、Android 與桌面瀏覽器的 PWA 檔案櫃。V2.1.0 採用 **GitHub Pages 純前端架構**：使用 Google Identity Services 取得短效 Access Token，再由瀏覽器直接呼叫 Google Drive REST API。此版重點為暖棕米白的雅致編輯介面改版，並保留內網相容的 Blob 下載、相片卡片、iPhone 圖片複製與登入狀態恢復。
 
 ```text
 GitHub Pages PWA
@@ -22,13 +22,13 @@ Google Drive API
 - Service Account JSON
 
 
-## V2.0.0：Hand-Drawn 手繪草圖介面
+## V2.1.0：還原 V1.9.0 雅致編輯介面
 
-- 新增 `handdrawn-theme.css`，集中管理紙張色、鉛筆色、修正紅、原子筆藍、手寫字型、不規則圓角與硬位移陰影。
-- 標題採 Kalam、內文與操作採 Patrick Hand，中文以 Klee One 作為手寫字型備援。
-- 側欄、頁首、按鈕、卡片、表格、相片圖庫、設定卡片與彈窗加入紙張、膠帶、圖釘、虛線與塗鴉裝飾。
-- 採單一淺色紙張主題，保留響應式版面、48px 觸控目標、鍵盤焦點與 reduced-motion 支援。
-- 重新設計 PWA 圖示，使安裝後圖示與介面風格一致。
+
+- 預設採暖棕、米白與紙張質感，建立雅致且沉穩的編輯風格。
+- 標題、頁面主標與重點數字使用 Newsreader；按鈕、欄位、表格及內文使用 Outfit。
+- 頁首、主視覺、摘要資訊、列表、設定卡片與手機底部導覽維持緊湊排版。
+- 表格、相片卡片、按鈕、欄位、彈窗及明暗模式皆同步套用暖棕色視覺系統。
 
 ### 下載相容性
 - 檔案、照片與備註附件不再以 `drive.google.com` 的 `webViewLink` 開啟。
@@ -182,7 +182,7 @@ Client ID、Folder ID、已登入帳號與尚未過期的短效 Access Token 會
 
 ## Google Drive 權限
 
-V2.0.0 使用完整 Google Drive scope，才能直接存取使用者貼入的既有 Folder ID、共享資料夾及 V1.3.0 已建立的資料。Google OAuth 可能顯示較廣泛的 Drive 授權說明。
+V2.1.0 使用完整 Google Drive scope，才能直接存取使用者貼入的既有 Folder ID、共享資料夾及 V1.3.0 已建立的資料。Google OAuth 可能顯示較廣泛的 Drive 授權說明。
 
 請確認：
 
@@ -201,7 +201,7 @@ V2.0.0 使用完整 Google Drive scope，才能直接存取使用者貼入的既
 
 ## 相片複製
 
-V2.0.0 的相片複製流程會：
+V2.1.0 的相片複製流程會：
 
 1. 開啟預覽時，先使用目前 Google Access Token 從 Drive 讀取原始圖片。
 2. 預先將圖片轉成 PNG，並暫存在記憶體快取。
@@ -227,7 +227,7 @@ V2.0.0 的相片複製流程會：
 目前版本：
 
 ```text
-V2.0.0
+V2.1.0
 ```
 
 程式啟動時會讀取 `version.json`。發現新版本時，會更新 Service Worker、清除舊的 DriveDock Cache Storage，並重新載入。

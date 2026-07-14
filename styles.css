@@ -3920,7 +3920,7 @@ body.modal-open {
   }
 }
 
-/* V1.9.0：緊湊、年輕化的淺藍白色視覺系統。 */
+/* V2.1.0：緊湊、年輕化的淺藍白色視覺系統。 */
 :root {
   --bg: #10243d;
   --bg-elevated: #17304e;
@@ -5137,7 +5137,7 @@ html[data-theme="dark"] .bottom-nav {
   }
 }
 
-/* V1.9.0：雅致編輯風格／暖棕色系／Newsreader + Outfit。 */
+/* V2.1.0：雅致編輯風格／暖棕色系／Newsreader + Outfit。 */
 :root {
   --font-display: "Newsreader", "Noto Serif TC", "Songti TC", Georgia, serif;
   --font-ui: "Outfit", "Noto Sans TC", "PingFang TC", system-ui, sans-serif;

@@ -1,13 +1,12 @@
 {
-  "version": "2.0.0",
+  "version": "2.1.0",
   "buildDate": "2026-07-14",
-  "cacheName": "drivedock-v2.0.0",
+  "cacheName": "drivedock-v2.1.0",
   "minimumSupportedVersion": "1.0.0",
   "releaseNotes": [
-    "全站改為 Hand-Drawn 手繪草圖風格，以暖紙白、鉛筆黑、修正紅與原子筆藍為核心色彩。",
-    "新增集中式 handdrawn-theme.css 設計系統，統一管理色彩、手寫字型、不規則圓角、粗框線與硬位移陰影。",
-    "標題採 Kalam，介面與內文採 Patrick Hand；中文環境加入 Klee One 手寫字型備援。",
-    "側欄、頁首、按鈕、卡片、表格、相片圖庫、設定區與彈窗全部套用紙張、膠帶、圖釘與塗鴉裝飾。",
-    "維持響應式、觸控尺寸、鍵盤焦點、Google 帳戶記憶、Blob 下載、圖片複製與版本更新功能。"
+    "完整還原 V1.9.0 的雅致編輯介面與原有功能，不保留 V2.0.0 手繪風格覆寫。",
+    "主色恢復暖棕與米白，標題使用 Newsreader，操作介面與內文使用 Outfit。",
+    "保留相片卡片、Google 帳戶記憶、Google Drive API Blob 下載、圖片複製與自動更新功能。",
+    "版本識別、Service Worker 快取名稱與更新資訊提升為 V2.1.0。"
   ]
 }
