@@ -24,7 +24,7 @@ const CONFIG = Object.freeze({
 });
 const DEMO_MODE = false;
 const APP_ID = "drivedock";
-const APP_VERSION = String(CONFIG.VERSION || "1.7.0");
+const APP_VERSION = String(CONFIG.VERSION || "1.8.0");
 const APP_BUILD_DATE = String(CONFIG.BUILD_DATE || "2026-07-14");
 const APP_CACHE_NAME = String(CONFIG.CACHE_NAME || `drivedock-v${APP_VERSION}`);
 const VERSION_MANIFEST_URL = "./version.json";
@@ -1275,7 +1275,7 @@ function setSyncStatus(label, status = "checking") {
 function applyTheme(theme, persist = true) {
   const next = theme === "light" ? "light" : "dark";
   document.documentElement.dataset.theme = next;
-  $("meta[name='theme-color']")?.setAttribute("content", next === "dark" ? "#08111f" : "#eef3f8");
+  $("meta[name='theme-color']")?.setAttribute("content", next === "dark" ? "#10243d" : "#eaf6ff");
   $("#theme-toggle").textContent = next === "dark" ? "☼" : "☾";
   $("#theme-toggle").setAttribute("aria-label", next === "dark" ? "切換亮色模式" : "切換深色模式");
   if (persist) localStorage.setItem("drivedock_theme", next);
@@ -3643,7 +3643,7 @@ function initializeEvents() {
 }
 
 async function initialize() {
-  applyTheme(localStorage.getItem("drivedock_theme") || "dark", false);
+  applyTheme(localStorage.getItem("drivedock_theme") || "light", false);
   void loadGoogleIdentityServices().catch(() => null);
   const hint = readLocalJson("drivedock_profile_hint", null);
   if (hint?.name) {
