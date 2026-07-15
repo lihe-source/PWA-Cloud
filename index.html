@@ -95,7 +95,7 @@
 <h1 id="page-title">檔案總覽</h1>
 </div>
 <div class="topbar-actions">
-<span aria-label="目前應用程式版本" class="top-version-badge" id="top-version-badge" title="目前應用程式版本"><span class="top-version-label">目前</span><strong id="top-version-value">V2.8.0</strong></span>
+<span aria-label="目前應用程式版本" class="top-version-badge" id="top-version-badge" title="目前應用程式版本"><span class="top-version-label">目前</span><strong id="top-version-value">V2.9.0</strong></span>
 <span class="sync-pill" id="sync-pill">
 <span aria-hidden="true" class="status-dot"></span>
 <span>Drive 檢查中</span>
@@ -165,12 +165,17 @@
 <span aria-hidden="true">⌕</span>
 <input autocomplete="off" id="file-search" placeholder="搜尋檔名或上傳者" type="search"/>
 </label>
+<button class="secondary-button zip-button" disabled="" id="zip-files" type="button">打包 ZIP <span id="zip-file-count">0</span></button>
 <button class="danger-button" disabled="" id="delete-files" type="button">刪除已選 <span id="selected-file-count">0</span></button>
 </div>
 </div>
 <div class="permission-note" id="file-permission-note">
 <span aria-hidden="true">◇</span>
 <span>重新命名與刪除權限依目前登入帳戶在 Google Drive 的實際權限決定。</span>
+</div>
+<div class="zip-progress-panel" hidden="" id="file-zip-status">
+<div><strong id="file-zip-title">準備 ZIP</strong><span id="file-zip-detail">等待選取檔案</span></div>
+<progress id="file-zip-progress" max="100" value="0"></progress>
 </div>
 <div class="table-wrap list-scroll-wrap file-table-wrap">
 <table class="data-table" id="file-table">
@@ -250,8 +255,13 @@
 </div>
 <div class="panel-actions">
 <span class="paste-hint"><kbd>Ctrl</kbd> + <kbd>V</kbd> 貼上圖片</span>
+<button class="secondary-button zip-button" disabled="" id="zip-photos" type="button">打包 ZIP <span id="zip-photo-count">0</span></button>
 <button class="danger-button" disabled="" id="delete-photos" type="button">刪除已選 <span id="selected-photo-count">0</span></button>
 </div>
+</div>
+<div class="zip-progress-panel" hidden="" id="photo-zip-status">
+<div><strong id="photo-zip-title">準備 ZIP</strong><span id="photo-zip-detail">等待選取相片</span></div>
+<progress id="photo-zip-progress" max="100" value="0"></progress>
 </div>
 <section aria-labelledby="photo-list-title" class="content-panel photo-list-panel photo-gallery-panel">
 <div class="photo-quick-tip" role="note">
@@ -281,7 +291,7 @@
 <h2 id="settings-title">系統設定</h2>
 <p>設定 Google OAuth Client ID 與 Drive 資料夾，瀏覽器會直接透過 Google Drive API 存取資料；下載時會先轉為本機 Blob，不開啟 Google Drive 網址。</p>
 </div>
-<span class="version-pill" id="settings-version-pill">V2.8.0</span>
+<span class="version-pill" id="settings-version-pill">V2.9.0</span>
 </div>
 <section aria-label="系統狀態摘要" class="settings-overview">
 
@@ -297,7 +307,7 @@
 </button>
 <button class="settings-overview-card is-version" data-setting-target="version" type="button">
 <span>應用程式版本</span>
-<strong id="overview-version">V2.8.0</strong>
+<strong id="overview-version">V2.9.0</strong>
 <small id="overview-update-state">自動檢查更新</small>
 </button>
 </section>
@@ -438,10 +448,10 @@
 <div class="setting-body version-control">
 <dl class="definition-grid version-definition-grid">
 <div><dt>應用程式</dt><dd>雲匣 DriveDock</dd></div>
-<div><dt>目前版本</dt><dd id="current-version-value">V2.8.0</dd></div>
+<div><dt>目前版本</dt><dd id="current-version-value">V2.9.0</dd></div>
 <div><dt>最新版本</dt><dd id="latest-version-value">檢查中</dd></div>
 <div><dt>最新建置日期</dt><dd id="build-date-value">2026-07-14</dd></div>
-<div><dt>最新快取版本</dt><dd id="cache-version-value">drivedock-v2.8.0</dd></div>
+<div><dt>最新快取版本</dt><dd id="cache-version-value">drivedock-v2.9.0</dd></div>
 <div><dt>上次檢查</dt><dd id="last-update-check">尚未檢查</dd></div>
 </dl>
 <div aria-live="polite" class="update-status-panel" data-state="checking" id="update-status-panel" role="status">

@@ -1,11 +1,12 @@
 {
-  "version": "2.8.0",
-  "buildDate": "2026-07-14",
-  "cacheName": "drivedock-v2.8.0",
+  "version": "2.9.0",
+  "buildDate": "2026-07-15",
+  "cacheName": "drivedock-v2.9.0",
   "minimumSupportedVersion": "1.0.0",
   "releaseNotes": [
-    "App icon 改為與目前暖棕雅致編輯介面一致的同色調風格。",
-    "同步更新 favicon、Apple touch icon、PWA icon 與啟動畫面，讓整體視覺更加一致。",
-    "保留 V2.7.0 的強化底部 Dock 導覽與既有所有功能。"
+    "檔案頁新增多選打包 ZIP 功能，可將已勾選檔案封裝後直接下載。",
+    "相片頁新增多選打包 ZIP 功能，可將已勾選圖片封裝後直接下載。",
+    "新增 ZIP 建立進度、成功／失敗數量提示及大型封裝記憶體提醒。",
+    "ZIP 於瀏覽器本機建立，不會開啟 Google Drive 網頁或傳送至其他伺服器。"
   ]
 }

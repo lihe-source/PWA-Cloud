@@ -1,9 +1,10 @@
-const CACHE_NAME = "drivedock-v2.8.0";
+const CACHE_NAME = "drivedock-v2.9.0";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
+  "./zip-utils.js",
   "./config.js",
   "./manifest.webmanifest",
   "./version.json",

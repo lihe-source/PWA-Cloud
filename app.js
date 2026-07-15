@@ -1,3 +1,5 @@
+import { ZipStoreBuilder } from "./zip-utils.js";
+
 const baseConfig = window.DRIVEDOCK_CONFIG || {};
 
 function readLocalJson(key, fallback) {
@@ -24,7 +26,7 @@ const CONFIG = Object.freeze({
 });
 const DEMO_MODE = false;
 const APP_ID = "drivedock";
-const APP_VERSION = String(CONFIG.VERSION || "2.8.0");
+const APP_VERSION = String(CONFIG.VERSION || "2.9.0");
 const APP_BUILD_DATE = String(CONFIG.BUILD_DATE || "2026-07-14");
 const APP_CACHE_NAME = String(CONFIG.CACHE_NAME || `drivedock-v${APP_VERSION}`);
 const VERSION_MANIFEST_URL = "./version.json";
@@ -360,6 +362,148 @@ async function driveFetch(pathOrUrl, options = {}) {
   if (response.status === 204) return {};
   const type = response.headers.get("content-type") || "";
   return type.includes("application/json") ? response.json() : response.text();
+}
+
+function zipTimestamp() {
+  const date = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}`;
+}
+
+function zipUi(kind) {
+  const isPhoto = kind === "photos";
+  return {
+    button: $(isPhoto ? "#zip-photos" : "#zip-files"),
+    count: $(isPhoto ? "#zip-photo-count" : "#zip-file-count"),
+    panel: $(isPhoto ? "#photo-zip-status" : "#file-zip-status"),
+    title: $(isPhoto ? "#photo-zip-title" : "#file-zip-title"),
+    detail: $(isPhoto ? "#photo-zip-detail" : "#file-zip-detail"),
+    progress: $(isPhoto ? "#photo-zip-progress" : "#file-zip-progress"),
+  };
+}
+
+function updateZipControls(kind) {
+  const isPhoto = kind === "photos";
+  const selected = isPhoto ? state.selectedPhotos : state.selectedFiles;
+  const busy = state.zipBusy[kind];
+  const ui = zipUi(kind);
+  if (!ui.button) return;
+  ui.count.textContent = String(selected.size);
+  ui.button.disabled = selected.size === 0 || busy || !navigator.onLine || !hasDriveSession();
+  ui.button.classList.toggle("is-ready", selected.size > 0 && !busy && navigator.onLine && hasDriveSession());
+  ui.button.setAttribute("aria-busy", busy ? "true" : "false");
+  ui.button.firstChild.textContent = busy ? "打包中 " : "打包 ZIP ";
+}
+
+function setZipStatus(kind, { visible = true, title = "準備 ZIP", detail = "", value = 0, max = 100, stateName = "working" } = {}) {
+  const ui = zipUi(kind);
+  if (!ui.panel) return;
+  ui.panel.hidden = !visible;
+  ui.panel.dataset.state = stateName;
+  ui.title.textContent = title;
+  ui.detail.textContent = detail;
+  ui.progress.max = max || 100;
+  ui.progress.value = Math.min(ui.progress.max, Math.max(0, value || 0));
+}
+
+async function packageSelectedAsZip(kind) {
+  const isPhoto = kind === "photos";
+  const selected = isPhoto ? state.selectedPhotos : state.selectedFiles;
+  const records = (isPhoto ? state.photos : state.files).filter((item) => selected.has(item.id));
+  if (!records.length || state.zipBusy[kind]) return;
+  if (!hasDriveSession()) {
+    requestGoogleSignIn({ quiet: true });
+    showToast("Google 授權需要恢復；完成授權後請再按一次打包 ZIP", "error");
+    return;
+  }
+  if (!navigator.onLine) {
+    showToast("目前離線，無法下載並建立 ZIP", "error");
+    return;
+  }
+
+  const estimatedBytes = records.reduce((total, item) => total + Number(item.sizeBytes || 0), 0);
+  if (estimatedBytes > 700 * 1024 * 1024) {
+    const proceed = confirm(`已選內容約 ${formatBytes(estimatedBytes)}。手機瀏覽器建立大型 ZIP 會使用較多記憶體，仍要繼續嗎？`);
+    if (!proceed) return;
+  }
+
+  state.zipBusy[kind] = true;
+  updateZipControls(kind);
+  const builder = new ZipStoreBuilder();
+  const failed = [];
+  let completed = 0;
+  let packedBytes = 0;
+  setSyncStatus("建立 ZIP 中");
+  setZipStatus(kind, {
+    title: isPhoto ? "正在打包相片" : "正在打包檔案",
+    detail: `準備下載 ${records.length} 個項目`,
+    value: 0,
+    max: records.length,
+  });
+
+  try {
+    for (let index = 0; index < records.length; index += 1) {
+      const item = records[index];
+      setZipStatus(kind, {
+        title: isPhoto ? "正在打包相片" : "正在打包檔案",
+        detail: `下載 ${index + 1}/${records.length}：${item.name}`,
+        value: index,
+        max: records.length,
+      });
+      try {
+        const blob = await fetchDriveBlob(item.id);
+        await builder.add(item.name || `item-${index + 1}`, blob, new Date(item.createdTime || Date.now()));
+        completed += 1;
+        packedBytes += blob.size;
+      } catch (error) {
+        failed.push({ item, error });
+      }
+      setZipStatus(kind, {
+        title: isPhoto ? "正在打包相片" : "正在打包檔案",
+        detail: `已處理 ${index + 1}/${records.length}，成功 ${completed} 個`,
+        value: index + 1,
+        max: records.length,
+      });
+    }
+
+    if (!completed) throw new Error(failed[0]?.error?.message || "選取項目皆無法下載");
+    setZipStatus(kind, {
+      title: "正在建立 ZIP 檔案",
+      detail: `共 ${completed} 個項目，${formatBytes(packedBytes)}`,
+      value: records.length,
+      max: records.length,
+    });
+    const zipBlob = builder.finalize();
+    const filename = `${isPhoto ? "DriveDock-Photos" : "DriveDock-Files"}-${zipTimestamp()}.zip`;
+    triggerBlobDownload(zipBlob, filename);
+
+    selected.clear();
+    if (isPhoto) renderPhotos();
+    else renderFiles();
+    setZipStatus(kind, {
+      title: "ZIP 已建立",
+      detail: failed.length ? `成功 ${completed} 個，失敗 ${failed.length} 個；ZIP 已開始下載` : `${completed} 個項目已開始下載`,
+      value: records.length,
+      max: records.length,
+      stateName: failed.length ? "warning" : "success",
+    });
+    showToast(failed.length ? `ZIP 已建立；${failed.length} 個項目無法加入` : `ZIP 已建立：${filename}`, failed.length ? "error" : "success");
+    setSyncStatus("Drive 已同步", "online");
+    setTimeout(() => setZipStatus(kind, { visible: false }), 12000);
+  } catch (error) {
+    setZipStatus(kind, {
+      title: "ZIP 建立失敗",
+      detail: error.message || "未知錯誤",
+      value: 0,
+      max: 100,
+      stateName: "error",
+    });
+    showToast(`打包 ZIP 失敗：${error.message}`, "error");
+    setSyncStatus("ZIP 建立失敗", "offline");
+  } finally {
+    state.zipBusy[kind] = false;
+    updateZipControls(kind);
+  }
 }
 
 function driveQueryValue(value = "") {
@@ -1011,6 +1155,7 @@ const state = {
   notesLoaded: false,
   selectedFiles: new Set(),
   selectedPhotos: new Set(),
+  zipBusy: { files: false, photos: false },
   sort: readLocalJson("drivedock_file_sort", { key: "createdTime", direction: "desc" }),
   columnOrder: readLocalJson("drivedock_column_order", DEFAULT_COLUMN_ORDER).filter((key) => FILE_COLUMNS[key]),
   fileSearch: "",
@@ -1936,6 +2081,7 @@ function renderFiles() {
   $("#file-table").hidden = records.length === 0;
   $("#selected-file-count").textContent = String(state.selectedFiles.size);
   $("#delete-files").disabled = state.selectedFiles.size === 0 || !state.canManage || !navigator.onLine;
+  updateZipControls("files");
   $("#file-permission-note").lastElementChild.textContent = hasDriveSession()
     ? "重新命名與刪除權限依目前登入帳戶在 Google Drive 的實際權限決定。"
     : "請先登入 Google，才能讀取與管理指定資料夾。";
@@ -2144,6 +2290,7 @@ function renderPhotos() {
   grid.hidden = photos.length === 0;
   $("#selected-photo-count").textContent = String(state.selectedPhotos.size);
   $("#delete-photos").disabled = state.selectedPhotos.size === 0 || !state.canManage || !navigator.onLine;
+  updateZipControls("photos");
 }
 
 async function loadPhotos(force = false) {
@@ -3701,6 +3848,7 @@ function initializeEvents() {
     renderFiles();
   });
   $("#refresh-files").addEventListener("click", () => loadFiles(true));
+  $("#zip-files").addEventListener("click", () => packageSelectedAsZip("files"));
   $("#delete-files").addEventListener("click", deleteSelectedFiles);
   $("#rename-form").addEventListener("submit", handleRename);
 
@@ -3714,6 +3862,7 @@ function initializeEvents() {
   $("#note-attachment-input").addEventListener("change", (event) => addNoteAttachments(event.target.files));
 
   $("#refresh-photos").addEventListener("click", () => loadPhotos(true));
+  $("#zip-photos").addEventListener("click", () => packageSelectedAsZip("photos"));
   $("#delete-photos").addEventListener("click", deleteSelectedPhotos);
   $("#download-photo").addEventListener("click", handleViewerDownloadClick);
   $("#copy-photo").addEventListener("click", handleViewerCopyClick);

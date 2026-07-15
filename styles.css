@@ -5742,7 +5742,7 @@ html[data-theme="dark"] .bottom-nav {
   }
 }
 
-/* V2.8.0：Flat Editorial —— 扁平、緊湊的暖棕編輯介面。 */
+/* V2.9.0：Flat Editorial —— 扁平、緊湊的暖棕編輯介面。 */
 :root {
   --sidebar-width: 204px;
   --topbar-height: 68px;
@@ -6476,7 +6476,7 @@ html[data-theme="light"] .data-table tbody tr:hover {
   }
 }
 
-/* V2.8.0：備註刪除操作 */
+/* V2.9.0：備註刪除操作 */
 .note-table th:first-child,
 .note-table td:first-child {
   width: 78px;
@@ -6520,7 +6520,7 @@ html[data-theme="light"] .data-table tbody tr:hover {
 }
 
 
-/* V2.8.0：強化手機底部懸浮導覽，與頁面內容明顯區隔。 */
+/* V2.9.0：強化手機底部懸浮導覽，與頁面內容明顯區隔。 */
 .bottom-nav {
   isolation: isolate;
 }
@@ -6669,7 +6669,7 @@ html[data-theme="light"] .data-table tbody tr:hover {
   }
 }
 
-/* V2.8.0：粗框 iOS 浮動 Dock + 獨立膠囊分頁按鈕。 */
+/* V2.9.0：粗框 iOS 浮動 Dock + 獨立膠囊分頁按鈕。 */
 @media (max-width: 820px) {
   main {
     padding-bottom: calc(126px + var(--safe-bottom));
@@ -6841,5 +6841,124 @@ html[data-theme="light"] .data-table tbody tr:hover {
 
   .bottom-nav a small {
     font-size: 9px;
+  }
+}
+
+/* V2.9.0：檔案／相片多選後於瀏覽器端打包 ZIP。 */
+.zip-button {
+  gap: 6px;
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+  background: var(--panel-soft);
+  color: var(--accent-strong);
+  white-space: nowrap;
+}
+
+.zip-button span {
+  display: inline-grid;
+  min-width: 22px;
+  min-height: 22px;
+  place-items: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.zip-button.is-ready {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fffdf9;
+}
+
+.zip-button.is-ready span {
+  background: rgb(255 255 255 / 20%);
+  color: inherit;
+}
+
+.zip-button[aria-busy="true"] {
+  cursor: wait;
+}
+
+.zip-progress-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 34%);
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-soft) 66%, var(--panel));
+}
+
+.zip-progress-panel[hidden] {
+  display: none !important;
+}
+
+.zip-progress-panel > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.zip-progress-panel strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.zip-progress-panel span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zip-progress-panel progress {
+  width: 100%;
+  height: 9px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: var(--panel-strong);
+  accent-color: var(--accent);
+}
+
+.zip-progress-panel progress::-webkit-progress-bar {
+  border-radius: 999px;
+  background: var(--panel-strong);
+}
+
+.zip-progress-panel progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.zip-progress-panel[data-state="success"] {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--line));
+  background: color-mix(in srgb, var(--success) 10%, var(--panel));
+}
+
+.zip-progress-panel[data-state="warning"] {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--line));
+  background: color-mix(in srgb, var(--warning) 10%, var(--panel));
+}
+
+.zip-progress-panel[data-state="error"] {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+  background: color-mix(in srgb, var(--danger-soft) 76%, var(--panel));
+}
+
+@media (max-width: 620px) {
+  .panel-actions .zip-button,
+  .panel-actions .danger-button {
+    flex: 1 1 auto;
+  }
+
+  .zip-progress-panel {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 9px 10px;
   }
 }
