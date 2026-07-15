@@ -1,13 +1,11 @@
 {
-  "version": "2.7.0",
+  "version": "2.8.0",
   "buildDate": "2026-07-14",
-  "cacheName": "drivedock-v2.7.0",
+  "cacheName": "drivedock-v2.8.0",
   "minimumSupportedVersion": "1.0.0",
   "releaseNotes": [
-    "將手機底部導覽改為更粗框、更接近 iOS 浮動 Dock 的工具列外觀。",
-    "檔案、備註、相片、設定四個分頁改為獨立膠囊按鈕，強化彼此區隔。",
-    "目前所在頁面使用暖棕實心膠囊、抬升效果與獨立圖示底座，辨識更明顯。",
-    "增加底部內容安全留白，避免導覽 Dock 與頁面內容重疊。",
-    "保留 V2.6.0 的 App icon、favicon、啟動畫面與既有所有功能。"
+    "App icon 改為與目前暖棕雅致編輯介面一致的同色調風格。",
+    "同步更新 favicon、Apple touch icon、PWA icon 與啟動畫面，讓整體視覺更加一致。",
+    "保留 V2.7.0 的強化底部 Dock 導覽與既有所有功能。"
   ]
 }
